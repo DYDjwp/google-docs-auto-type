@@ -1,0 +1,10 @@
+# Operating system / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Generated / temporary files
+dist/
+*.log
+node_modules/
