@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Auto Type</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <div class="identity">
+        <span class="mark" aria-hidden="true">at<span>.</span></span>
+        <div><h1>Auto Type</h1><p>For Google Docs</p></div>
+      </div>
+      <span id="connected" class="connection">Checking</span>
+    </header>
+
+    <section class="composer" aria-label="Text to type">
+      <div class="section-line">
+        <label class="section-name" for="text">Text</label>
+        <span id="count" class="muted">0 characters · 0 lines</span>
+      </div>
+      <textarea id="text" spellcheck="false" placeholder="Paste your text here…"></textarea>
+      <p class="help">Paragraphs and blank lines are kept. Text is not uploaded.</p>
+    </section>
+
+    <section class="controls" aria-label="Typing options">
+      <div class="section-line">
+        <h2 class="section-name">Speed</h2>
+        <label class="toggle-line compact" for="advancedMode"><span>Advanced mode</span>
+          <span class="switch"><input id="advancedMode" type="checkbox"><span class="switch-track"></span></span>
+        </label>
+      </div>
+      <div id="presetSection" class="segments" role="group" aria-label="Speed preset">
+        <button type="button" class="speed" data-speed="slow">Slow<small>180 CPM</small></button>
+        <button type="button" class="speed" data-speed="medium">Medium<small>300 CPM</small></button>
+        <button type="button" class="speed" data-speed="fast">Fast<small>520 CPM</small></button>
+      </div>
+
+      <label class="toggle-line option-row" for="rest">
+        <span><b>Random breaks</b><small>Vary the intervals between keystrokes</small></span>
+        <span class="switch"><input id="rest" type="checkbox"><span class="switch-track"></span></span>
+      </label>
+
+      <h2 class="section-name behavior-heading">Behavior</h2>
+      <div class="behavior" role="group" aria-label="Typing behavior">
+        <button type="button" id="typo" class="feature" aria-pressed="false">Typo</button>
+        <button type="button" id="fixTypo" class="feature" aria-pressed="false">Fix typo</button>
+        <button type="button" id="deepRest" class="feature" aria-pressed="false">Deep rest</button>
+      </div>
+
+      <section id="advancedPanel" class="advanced" hidden>
+        <div class="advanced-header"><h2>Advanced settings</h2><button id="reset" type="button">Reset</button></div>
+        <p class="help">Advanced speed overrides the presets above.</p>
+
+        <h3>Typing</h3>
+        <div class="fields">
+          <label>Characters / min<input id="cpm" type="number" min="30" max="1800" step="10"></label>
+          <label>Speed variation, %<input id="jitter" type="number" min="0" max="90" step="1"></label>
+          <label>Punctuation delay, ms<input id="punctuationMs" type="number" min="0" max="3000" step="50"></label>
+          <label>Newline delay, ms<input id="newlineMs" type="number" min="0" max="5000" step="50"></label>
+          <label>Start delay, sec<input id="startDelay" type="number" min="0" max="15" step="0.5"></label>
+          <label>Enter event<select id="enterStrategy"><option value="keydown">Keydown + keyup</option><option value="keypress">Keypress + keyup</option><option value="both">All three events</option></select></label>
+          <label id="modeRow" hidden>Input mode<select id="mode"><option value="auto">iframe → CDP on failure</option><option value="iframe">iframe only</option><option value="cdp">CDP only</option></select></label>
+        </div>
+        <p class="help">If Docs ignores line breaks, try another Enter event method.</p>
+
+        <h3>Random breaks</h3>
+        <div class="fields">
+          <label>Break after min chars<input id="restMinChars" type="number" min="5" max="10000"></label>
+          <label>Break after max chars<input id="restMaxChars" type="number" min="5" max="10000"></label>
+          <label>Min break, ms<input id="restMinMs" type="number" min="0" max="60000"></label>
+          <label>Max break, ms<input id="restMaxMs" type="number" min="0" max="60000"></label>
+          <label>Micro-break chance, %<input id="microChance" type="number" min="0" max="100"></label>
+          <label>Micro-break min, ms<input id="microMinMs" type="number" min="0" max="10000"></label>
+          <label>Micro-break max, ms<input id="microMaxMs" type="number" min="0" max="10000"></label>
+        </div>
+
+        <h3>Typos</h3>
+        <div class="fields">
+          <label>Uncorrected typo, %<input id="typoChance" type="number" min="0" max="35" step="0.5"></label>
+          <label>Corrected typo, %<input id="fixChance" type="number" min="0" max="35" step="0.5"></label>
+          <label>Correction delay, ms<input id="fixPauseMs" type="number" min="0" max="3000" step="50"></label>
+        </div>
+
+        <h3>Deep rest</h3>
+        <div class="fields">
+          <label>Pause after<select id="deepRestAt"><option value="both">Words & sentences</option><option value="word">Words</option><option value="sentence">Sentences</option></select></label>
+          <label>Pause chance, %<input id="deepChance" type="number" min="0" max="100" step="1"></label>
+          <label>Min rest, ms<input id="deepMinMs" type="number" min="0" max="120000" step="100"></label>
+          <label>Max rest, ms<input id="deepMaxMs" type="number" min="0" max="120000" step="100"></label>
+        </div>
+
+        <h3>During typing</h3>
+        <label class="toggle-line option-row" for="keyboardLock">
+          <span><b>Keyboard lock</b><small>Block manual typing in this tab. Esc pauses.</small></span>
+          <span class="switch"><input id="keyboardLock" type="checkbox"><span class="switch-track"></span></span>
+        </label>
+        <label class="toggle-line option-row" for="showOverlay">
+          <span><b>Floating controls</b><small>Show the bottom-right pause / stop panel</small></span>
+          <span class="switch"><input id="showOverlay" type="checkbox"><span class="switch-track"></span></span>
+        </label>
+      </section>
+    </section>
+
+    <section class="session" aria-label="Typing session">
+      <div class="session-status"><span id="state" role="status">Ready</span><span id="percentage">0%</span></div>
+      <div class="progress-track"><div id="progress"></div></div>
+      <div class="actions">
+        <button id="start" class="primary" type="button">Start typing</button>
+        <button id="pause" class="secondary" type="button" disabled>Pause</button>
+        <button id="stop" class="secondary" type="button" disabled>Stop</button>
+      </div>
+      <p class="footer">Reopen the extension to pause or stop.</p>
+    </section>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
