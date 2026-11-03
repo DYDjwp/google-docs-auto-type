@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Auto Type Hybrid",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "iframe-first Google Docs auto typing with CDP fallback (debugger permission required).",
   "minimum_chrome_version": "116",
   "permissions": [

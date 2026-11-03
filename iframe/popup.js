@@ -26,6 +26,18 @@ let currentState = "idle";
 let timer = null;
 const isDocs = url => /^https:\/\/docs\.google\.com\/document\//.test(url || "");
 
+// Preserve unfinished input per document tab for this browser session.
+// The popup is destroyed when Start is pressed or the popup is dismissed.
+let draftSaveTimer = null;
+let draftSaveTail = Promise.resolve();
+function draftKey() { return `autoTypeDraft:${activeTabId}`; }
+function saveDraft(value) {
+  const key = draftKey();
+  draftSaveTail = draftSaveTail.catch(() => {}).then(() =>
+    chrome.storage.session.set({[key]: value}));
+  return draftSaveTail;
+}
+
 function setMessage(message, tone = "idle") {
   $("state").textContent = message;
   $("state").className = `state ${tone}`;
@@ -119,6 +131,12 @@ async function init() {
   if (tab && isDocs(tab.url)) {
     activeTabId = tab.id;
     $("connected").textContent = "Connected";
+    const key = draftKey();
+    const stored = await chrome.storage.session.get(key);
+    if (typeof stored[key] === "string" && !$("text").value) {
+      $("text").value = stored[key];
+      $("text").dispatchEvent(new Event("input"));
+    }
     await refresh();
     timer = setInterval(refresh, 850);
   } else {
@@ -133,6 +151,12 @@ $("text").addEventListener("input", () => {
   const value = $("text").value;
   const lines = value.split("\n").length;
   $("count").textContent = `${Array.from(value).length.toLocaleString()} chars · ${lines} ${lines === 1 ? "line" : "lines"}`;
+  if (activeTabId) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = setTimeout(() => {
+      void saveDraft(value).catch(error => console.warn("Unable to save text draft", error));
+    }, 180);
+  }
 });
 
 for (const button of document.querySelectorAll(".speed")) {
@@ -183,6 +207,9 @@ $("start").addEventListener("click", async () => {
   if (!activeTabId) return;
   $("start").disabled = true;
   try {
+    // Always finish saving the source text before this popup can close.
+    clearTimeout(draftSaveTimer);
+    await saveDraft(text);
     const answer = await pageMessage("AT_PAGE_START", {text, options});
     if (!answer?.ok) throw new Error(answer?.error || "Could not start");
     renderStatus(answer.status);
@@ -203,4 +230,8 @@ $("stop").addEventListener("click", async () => {
   } catch (e) { setMessage(e.message, "error"); }
 });
 window.addEventListener("unload", () => { if (timer) clearInterval(timer); });
+window.addEventListener("pagehide", () => {
+  clearTimeout(draftSaveTimer);
+  if (activeTabId) void saveDraft($("text").value).catch(() => {});
+});
 init().catch(e => setMessage(`Initialization failed: ${e.message}`, "error"));

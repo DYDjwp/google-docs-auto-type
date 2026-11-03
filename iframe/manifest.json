@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Auto Type",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Type text into Google Docs, including in background tabs, using its input iframe. No debugger permission.",
   "minimum_chrome_version": "116",
   "permissions": [

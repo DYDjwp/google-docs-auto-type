@@ -118,7 +118,16 @@
     // Install into already-open documents on demand. This executes in MAIN,
     // not the default ISOLATED world of content.js.
     await sendToBackground("AT_BG_PREPARE_IFRAME");
-    await bridgeRequest("probe");
+    // Google Docs occasionally replaces its internal input iframe.
+    // Retry only before typing, and only for a temporarily missing target.
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try { await bridgeRequest("probe"); return; }
+      catch (error) {
+        const transient = /Google Docs input (?:iframe|target) is unavailable/.test(error?.message || "");
+        if (!transient || attempt === 5) throw error;
+        await backgroundWait(200);
+      }
+    }
   }
 
   async function insertViaIframe(character, strategy) {
@@ -339,6 +348,7 @@
 
   async function run(task) {
     try {
+      task.phase = "preparing input iframe";
       task.mode = task.options.mode === "cdp" ? "CDP" : "iframe";
       if (task.options.mode !== "cdp") {
         try { await prepareIframe(); }
@@ -349,6 +359,7 @@
         }
       }
       if (!isActive(task)) return;
+      task.phase = "typing";
       enableKeyboardLock(task);
       if (task.options.showOverlay) ensureOverlay();
       else if (overlay?.host?.isConnected) overlay.host.remove();
@@ -420,9 +431,21 @@
     } catch (error) {
       task.error = error?.message || String(error);
       task.state = "error";
+      // Diagnostic metadata only; never log source text or typed characters.
+      let frame = {present: false};
+      try {
+        const element = document.querySelector("iframe.docs-texteventtarget-iframe");
+        const doc = element?.contentDocument;
+        frame = {present: !!element, accessible: !!doc, activeTag: doc?.activeElement?.tagName || null};
+      } catch (e) { frame = {present: true, accessible: false, reason: e?.name || "unknown"}; }
+      console.error("[Auto Type] session failed", {
+        phase: task.phase, index: task.index, total: task.chars.length,
+        mode: task.mode, error: task.error, frame
+      });
     } finally {
       disableKeyboardLock();
       try { await sendToBackground("AT_BG_DETACH"); } catch { /* no attached debugger */ }
+      task.finalized = true;
       updateOverlay();
       notifyBadge(task, true);
     }
@@ -431,6 +454,8 @@
   function start(message) {
     if (job && ["running", "paused"].includes(job.state))
       return {ok: false, error: "A typing session is already running. Stop it first."};
+    if (job && !job.finalized)
+      return {ok: false, error: "Previous typing session is still cleaning up. Try again shortly."};
     const text = String(message.text || "").replace(/\r\n?/g, "\n").replace(/\t/g, "    ");
     if (!text.trim()) return {ok: false, error: "Paste some text first."};
     if (text.length > 200000) return {ok: false, error: "Maximum 200,000 characters per session."};
@@ -438,7 +463,7 @@
     job = {
       chars: Array.from(text), index: 0, state: "running", stopped: false,
       paused: false, options, mode: "", error: "", sinceRest: 0,
-      nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false
+      nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, finalized: false
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

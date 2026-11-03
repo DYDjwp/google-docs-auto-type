@@ -4,6 +4,8 @@ Auto Type is a Chrome extension for entering text into Google Docs at a configur
 
 The project is distributed in two editions. Both use the same interface and typing controls; the Hybrid edition adds Chrome DevTools Protocol (CDP) as an alternative input method.
 
+**Current source version: 1.0.1** (November 2026). Both iframe and Hybrid editions contain the same reliability changes.
+
 ## Editions
 
 | | iframe | Hybrid |
@@ -11,7 +13,9 @@ The project is distributed in two editions. Both use the same interface and typi
 | Input method | Google Docs iframe | iframe first; CDP fallback |
 | Chrome debugger permission | Not required | Required |
 | Directory | [`iframe/`](iframe/) | [`hybrid/`](hybrid/) |
-| Release package | `auto-type-1.0.0-iframe.zip` | `auto-type-1.0.0-hybrid.zip` |
+| Prior published package (v1.0.0) | `auto-type-1.0.0-iframe.zip` | `auto-type-1.0.0-hybrid.zip` |
+
+The v1.0.1 changes are currently available in this source repository. The older v1.0.0 release archives do **not** contain them; dedicated v1.0.1 release ZIPs have not yet been published.
 
 The iframe edition is recommended unless CDP support is specifically needed. Chrome does not support requesting the `debugger` permission as an optional permission, so Hybrid is maintained as a separate extension package.
 
@@ -40,6 +44,14 @@ To install from a clone of this repository, load either the `iframe/` or `hybrid
 
 The extension attempts to preserve paragraph breaks, including consecutive blank lines. Verify the resulting document after a run, particularly when using background typing or advanced input settings.
 
+## Changes in 1.0.1
+
+- Preserve the original text draft for the current browser session, separately for each Google Docs tab. Reopen the popup after a failed run to retry without re-pasting.
+- Retry a briefly unavailable Google Docs input iframe before the first character.
+- Block new sessions until the previous run has finished cleanup and emit non-content diagnostics on errors.
+
+**Known limitation:** The reported every-other-run error has not been reliably reproduced, so these changes are defensive rather than a confirmed root-cause fix.
+
 ## Features
 
 - Three preset speeds and an advanced characters-per-minute setting.
@@ -59,7 +71,7 @@ Google Docs' iframe input behavior is **undocumented and unsupported by Google**
 
 ## Privacy and permissions
 
-The extension operates on Google Docs pages and stores user preferences using `chrome.storage.local`. Text provided for a session is held locally while the session runs and is not sent by the extension to a separate server. The project does not include analytics or external runtime libraries.
+The extension operates on Google Docs pages and stores user preferences using `chrome.storage.local`. In v1.0.1, entered text drafts are stored in `chrome.storage.session` per tab and cleared when the browser session ends. Text is not sent by the extension to a separate server. The project does not include analytics or external runtime libraries.
 
 The Hybrid edition requires the sensitive `debugger` permission. Review the source and Chrome's permission prompt before installing it.
 

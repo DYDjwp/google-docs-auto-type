@@ -2,6 +2,13 @@
 
 This is the iframe-only build of Auto Type. It enters text through Google Docs' internal input iframe and does not request Chrome's `debugger` permission.
 
+## Version 1.0.1
+
+- Text drafts are retained per Google Docs tab for the current browser session, even if a typing run fails.
+- Brief input-iframe unavailability is retried before typing starts.
+- New runs cannot start while the previous run is still finalizing; failures now log non-content diagnostics.
+- The intermittent alternating-run issue has **not** been conclusively reproduced or fixed. Always verify edits in Google Docs.
+
 ## Install
 
 1. Open `chrome://extensions` and enable **Developer mode**.
