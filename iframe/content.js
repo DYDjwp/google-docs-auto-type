@@ -115,17 +115,28 @@
   }
 
   async function prepareIframe() {
-    // Install into already-open documents on demand. This executes in MAIN,
-    // not the default ISOLATED world of content.js.
-    await sendToBackground("AT_BG_PREPARE_IFRAME");
-    // Google Docs occasionally replaces its internal input iframe.
-    // Retry only before typing, and only for a temporarily missing target.
+    // The popup installs main-bridge.js directly using chrome.scripting.
+    // Probe before contacting the service worker so iframe typing works
+    // even when Chrome cannot deliver a message to the background listener.
+    let firstError;
+    try { await bridgeRequest("probe"); return; }
+    catch (error) { firstError = error; }
+
+    const message = firstError?.message || "";
+    if (/MAIN-world input bridge did not respond/.test(message)) {
+      // Compatibility path for callers other than the popup.
+      // If this throws, we report the missing background receiver explicitly.
+      await sendToBackground("AT_BG_PREPARE_IFRAME");
+    } else if (!/Google Docs input (?:iframe|target) is unavailable/.test(message)) {
+      throw firstError;
+    }
+    // Retry a temporary Docs iframe replacement without relying on the worker.
     for (let attempt = 0; attempt < 6; attempt++) {
       try { await bridgeRequest("probe"); return; }
       catch (error) {
         const transient = /Google Docs input (?:iframe|target) is unavailable/.test(error?.message || "");
         if (!transient || attempt === 5) throw error;
-        await backgroundWait(200);
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
   }
@@ -141,15 +152,34 @@
   }
 
   async function sendToBackground(type, data = {}) {
-    const response = await chrome.runtime.sendMessage({type, ...data});
-    if (!response?.ok) throw new Error(response?.error || "Background connection failed");
+    let response;
+    try { response = await chrome.runtime.sendMessage({type, ...data}); }
+    catch (error) {
+      throw new Error(`Background message ${type} failed: ${error?.message || String(error)}`);
+    }
+    if (!response?.ok) throw new Error(`Background message ${type} failed: ${response?.error || "No reply"}`);
   }
+  const noBackgroundReceiver = error =>
+    /Could not establish connection\. Receiving end does not exist\./.test(error?.message || "");
 
   // A Docs tab's timers are throttled after it becomes backgrounded.
   // Schedule short waits in the extension service worker instead. Each
   // round trip also keeps the worker active during an ongoing session.
+  let localWaitFallback = false;
   async function backgroundWait(milliseconds) {
-    await sendToBackground("AT_BG_WAIT", {ms: Math.ceil(milliseconds)});
+    const delay = Math.max(0, Math.ceil(milliseconds));
+    if (!localWaitFallback) {
+      try {
+        await sendToBackground("AT_BG_WAIT", {ms: delay});
+        return;
+      } catch (error) {
+        if (!noBackgroundReceiver(error)) throw error;
+        localWaitFallback = true;
+        // One warning per session. A backgrounded tab may throttle these timers.
+        console.warn("[Auto Type] Background receiver unavailable; using local timing for this iframe session.");
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, delay));
   }
 
   async function pauseAwareWait(task, timeMs) {
@@ -448,8 +478,10 @@
       try {
         try { disableKeyboardLock(); }
         catch (error) { console.warn("[Auto Type] keyboard lock cleanup failed", error); }
-        try { await sendToBackground("AT_BG_DETACH"); }
-        catch { /* no attached debugger */ }
+        if (HAS_CDP && task.mode === "CDP") {
+          try { await sendToBackground("AT_BG_DETACH"); }
+          catch { /* debugger may already be detached */ }
+        }
       } finally {
         // Always release the session guard, even when cleanup itself throws.
         task.finalized = true;
@@ -470,6 +502,7 @@
     if (!text.trim()) return {ok: false, error: "Paste some text first."};
     if (text.length > 200000) return {ok: false, error: "Maximum 200,000 characters per session."};
     const options = normalize(message.options);
+    localWaitFallback = false;
     job = {
       chars: Array.from(text), index: 0, state: "running", stopped: false,
       paused: false, options, mode: "", error: "", sinceRest: 0,

@@ -182,3 +182,75 @@ test("keyboard lock cleanup failure does not permanently lock future sessions", 
   for (let i = 0; i < 30 && send("AT_PAGE_STATUS").status.state !== "done"; i++) await tick(1);
   assert.equal(send("AT_PAGE_STATUS").status.state, "done");
 });
+
+
+test("iframe typing survives a missing background message receiver", async () => {
+  const events = new Map();
+  class SyntheticEvent {
+    constructor(type, options = {}) { this.type = type; this.detail = options.detail; }
+  }
+  const document = {
+    addEventListener(type, handler) {
+      events.set(type, [...(events.get(type) || []), handler]);
+    },
+    removeEventListener(type, handler) {
+      events.set(type, (events.get(type) || []).filter(fn => fn !== handler));
+    },
+    dispatchEvent(event) {
+      if (event.type === "__auto_type_main_request_v3__") {
+        const request = JSON.parse(event.detail);
+        queueMicrotask(() => document.dispatchEvent(new SyntheticEvent("__auto_type_main_response_v3__", {
+          detail: JSON.stringify({id: request.id, ok: true})
+        })));
+      }
+      for (const handler of [...(events.get(event.type) || [])]) handler(event);
+      return true;
+    },
+    querySelector: () => null
+  };
+  let listener;
+  const warnings = [];
+  let backgroundCalls = 0;
+  const chrome = {
+    runtime: {
+      getManifest: () => ({permissions: []}),
+      onMessage: {addListener: fn => { listener = fn; }},
+      async sendMessage() {
+        backgroundCalls++;
+        throw new Error("Could not establish connection. Receiving end does not exist.");
+      }
+    }
+  };
+  vm.runInNewContext(read("iframe/content.js"), {
+    chrome, document, window: {},
+    console: {...console, warn: (...args) => warnings.push(args)},
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    performance, Event: SyntheticEvent, CustomEvent: SyntheticEvent
+  }, {filename: "content.js"});
+  const send = (type, data = {}) => {
+    let result;
+    listener({type, ...data}, {}, value => {result = value;});
+    return result;
+  };
+  assert.equal(send("AT_PAGE_START", {
+    text: "ab",
+    options: {advancedMode: true, startDelay: 0, cpm: 1800, jitter: 0, mode: "iframe", showOverlay: false}
+  }).ok, true);
+  for (let i = 0; i < 70 && send("AT_PAGE_STATUS").status.state === "running"; i++) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  const status = send("AT_PAGE_STATUS").status;
+  assert.equal(status.state, "done", status.error);
+  assert.equal(status.index, 2);
+  assert.equal(backgroundCalls, 1, "only first background wait attempted after failover");
+  assert.equal(warnings.length, 1, "only one fallback warning per session");
+});
+
+test("popup injects MAIN-world bridge without requiring worker on Start", async () => {
+  // Static guard for the critical path independent of background.js:
+  const script = read("iframe/popup.js");
+  assert.match(script, /await chrome\.scripting\.executeScript\(/);
+  assert.match(script, /files: \["main-bridge\.js"\]/);
+  assert.match(script, /world: "MAIN"/);
+  assert.ok(script.indexOf('files: ["main-bridge.js"]') < script.indexOf('pageMessage("AT_PAGE_START"'));
+});

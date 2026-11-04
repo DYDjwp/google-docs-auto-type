@@ -260,6 +260,16 @@ $("start").addEventListener("click", async () => {
     // Always finish saving the source text before this popup can close.
     clearTimeout(draftSaveTimer);
     await saveDraft(text);
+    // Install the MAIN-world bridge from the popup, independently of the
+    // background service worker. This prevents a missing runtime.onMessage
+    // receiver from aborting an otherwise healthy iframe typing session.
+    if (!HAS_CDP || options.mode !== "cdp") {
+      await chrome.scripting.executeScript({
+        target: {tabId: activeTabId},
+        files: ["main-bridge.js"],
+        world: "MAIN"
+      });
+    }
     const answer = await pageMessage("AT_PAGE_START", {text, options});
     if (!answer?.ok) throw new Error(answer?.error || "Could not start");
     renderStatus(answer.status);
