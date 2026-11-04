@@ -39,6 +39,7 @@ To install from a clone of this repository, load either the `iframe/` or `hybrid
 3. Select **Slow**, **Medium**, or **Fast**, or enable **Advanced mode** to configure a custom rate and timing parameters.
 4. Set any optional typing behaviors, then select **Start typing**.
 5. Use the extension popup or floating controls to pause, resume, or stop the session.
+6. To erase the saved text for the current document tab, click **Clear draft** beside the character counter. This does not delete text already inserted into Google Docs.
 
 The extension attempts to preserve paragraph breaks, including consecutive blank lines. Verify the resulting document after a run, particularly when using background typing or advanced input settings.
 

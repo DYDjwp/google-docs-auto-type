@@ -19,7 +19,10 @@
     <section class="composer" aria-label="Text to type">
       <div class="section-line">
         <label class="section-name" for="text">Text</label>
-        <span id="count" class="muted">0 characters · 0 lines</span>
+        <div class="draft-tools">
+          <span id="count" class="muted">0 characters · 0 lines</span>
+          <button id="clearDraft" class="clear-draft" type="button" title="Clear the saved draft for this document" disabled>Clear draft</button>
+        </div>
       </div>
       <textarea id="text" spellcheck="false" placeholder="Paste your text here…"></textarea>
       <p class="help">Paragraphs and blank lines are kept. Text is not uploaded.</p>

@@ -30,12 +30,30 @@ const isDocs = url => /^https:\/\/docs\.google\.com\/document\//.test(url || "")
 // The popup is destroyed when Start is pressed or the popup is dismissed.
 let draftSaveTimer = null;
 let draftSaveTail = Promise.resolve();
-function draftKey() { return `autoTypeDraft:${activeTabId}`; }
+let draftDirty = false;
+let draftLoaded = false;
+let clearingDraft = false;
+let popupClosing = false;
+function draftKey() { return activeTabId ? `autoTypeDraft:${activeTabId}` : null; }
 function saveDraft(value) {
   const key = draftKey();
+  if (!key) return Promise.resolve();
+  // Serialize saves and deletes so a previous autosave cannot restore a cleared draft.
   draftSaveTail = draftSaveTail.catch(() => {}).then(() =>
     chrome.storage.session.set({[key]: value}));
   return draftSaveTail;
+}
+function removeDraft() {
+  const key = draftKey();
+  if (!key) return Promise.resolve();
+  draftSaveTail = draftSaveTail.catch(() => {}).then(() =>
+    chrome.storage.session.remove(key));
+  return draftSaveTail;
+}
+function updateTextCount() {
+  const value = $("text").value;
+  const lines = value.split("\n").length;
+  $("count").textContent = `${Array.from(value).length.toLocaleString()} chars · ${lines} ${lines === 1 ? "line" : "lines"}`;
 }
 
 function setMessage(message, tone = "idle") {
@@ -133,12 +151,19 @@ async function init() {
     $("connected").textContent = "Connected";
     const key = draftKey();
     const stored = await chrome.storage.session.get(key);
-    if (typeof stored[key] === "string" && !$("text").value) {
+    if (popupClosing) return;
+    // Never overwrite a user's edit with a late result from storage.
+    if (!draftDirty && typeof stored[key] === "string") {
       $("text").value = stored[key];
-      $("text").dispatchEvent(new Event("input"));
+      updateTextCount();
     }
+    draftLoaded = true;
+    $("clearDraft").disabled = false;
+    // Input might have been edited while the draft was still loading.
+    if (draftDirty) void saveDraft($("text").value)
+      .catch(error => console.warn("Unable to save text draft", error));
     await refresh();
-    timer = setInterval(refresh, 850);
+    if (!popupClosing) timer = setInterval(refresh, 850);
   } else {
     $("connected").textContent = "No document";
     $("connected").classList.add("bad");
@@ -148,14 +173,39 @@ async function init() {
 }
 
 $("text").addEventListener("input", () => {
-  const value = $("text").value;
-  const lines = value.split("\n").length;
-  $("count").textContent = `${Array.from(value).length.toLocaleString()} chars · ${lines} ${lines === 1 ? "line" : "lines"}`;
-  if (activeTabId) {
+  updateTextCount();
+  draftDirty = true;
+  if (activeTabId && !clearingDraft) {
     clearTimeout(draftSaveTimer);
+    const value = $("text").value;
     draftSaveTimer = setTimeout(() => {
       void saveDraft(value).catch(error => console.warn("Unable to save text draft", error));
     }, 180);
+  }
+});
+$("clearDraft").addEventListener("click", async () => {
+  if (!activeTabId || !draftLoaded || clearingDraft) return;
+  clearingDraft = true;
+  clearTimeout(draftSaveTimer);
+  $("clearDraft").disabled = true;
+  $("text").disabled = true;
+  const previousText = $("text").value;
+  $("text").value = "";
+  updateTextCount();
+  // A later pagehide must not re-save the now-empty input or the old draft.
+  draftDirty = false;
+  try {
+    await removeDraft();
+    setMessage("Draft cleared for this document", "ok");
+  } catch (error) {
+    $("text").value = previousText;
+    updateTextCount();
+    draftDirty = true;
+    setMessage(`Could not clear draft: ${error?.message || String(error)}`, "error");
+  } finally {
+    clearingDraft = false;
+    $("text").disabled = false;
+    $("clearDraft").disabled = false;
   }
 });
 
@@ -204,7 +254,7 @@ $("start").addEventListener("click", async () => {
   const text = $("text").value;
   if (!text.trim()) { setMessage("Paste some text first", "error"); return; }
   if (text.length > 200000) { setMessage("Maximum 200,000 characters per session", "error"); return; }
-  if (!activeTabId) return;
+  if (!activeTabId || clearingDraft) return;
   $("start").disabled = true;
   try {
     // Always finish saving the source text before this popup can close.
@@ -231,7 +281,11 @@ $("stop").addEventListener("click", async () => {
 });
 window.addEventListener("unload", () => { if (timer) clearInterval(timer); });
 window.addEventListener("pagehide", () => {
+  popupClosing = true;
   clearTimeout(draftSaveTimer);
-  if (activeTabId) void saveDraft($("text").value).catch(() => {});
+  // Closing an unedited popup (especially while init awaits storage.get)
+  // must never overwrite its saved draft with an empty textarea.
+  if (activeTabId && draftDirty && !clearingDraft)
+    void saveDraft($("text").value).catch(() => {});
 });
 init().catch(e => setMessage(`Initialization failed: ${e.message}`, "error"));

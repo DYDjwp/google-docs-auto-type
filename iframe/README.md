@@ -8,6 +8,7 @@ This is the iframe-only build of Auto Type. It enters text through Google Docs' 
 2. Select **Load unpacked** and choose this directory.
 3. Open a Google Docs document with edit permission and place the cursor where text should be entered.
 4. Open the extension, paste text, configure the typing settings, and select **Start typing**.
+5. To clear saved popup text for the current document tab, use **Clear draft** next to the character count.
 
 ## Input behavior
 

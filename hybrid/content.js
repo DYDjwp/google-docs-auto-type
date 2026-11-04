@@ -275,8 +275,10 @@
     };
   }
   function disableKeyboardLock() {
-    if (keyboardLockController) keyboardLockController();
+    // Clear the controller first, even if a listener cannot be removed.
+    const cleanup = keyboardLockController;
     keyboardLockController = null;
+    if (cleanup) cleanup();
   }
 
   function wrongLetter(char) {
@@ -443,11 +445,19 @@
         mode: task.mode, error: task.error, frame
       });
     } finally {
-      disableKeyboardLock();
-      try { await sendToBackground("AT_BG_DETACH"); } catch { /* no attached debugger */ }
-      task.finalized = true;
-      updateOverlay();
-      notifyBadge(task, true);
+      try {
+        try { disableKeyboardLock(); }
+        catch (error) { console.warn("[Auto Type] keyboard lock cleanup failed", error); }
+        try { await sendToBackground("AT_BG_DETACH"); }
+        catch { /* no attached debugger */ }
+      } finally {
+        // Always release the session guard, even when cleanup itself throws.
+        task.finalized = true;
+        try { updateOverlay(); }
+        catch (error) { console.warn("[Auto Type] overlay update failed", error); }
+        try { notifyBadge(task, true); }
+        catch (error) { console.warn("[Auto Type] badge update failed", error); }
+      }
     }
   }
 
