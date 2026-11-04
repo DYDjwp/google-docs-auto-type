@@ -69,13 +69,13 @@ function popupHarness({deferredLoad = false} = {}) {
   };
   const window = {
     addEventListener: (name, callback) => windowEvents.set(name, callback),
-    close: () => windowEvents.get("pagehide")?.()
+    close: () => { windowEvents.get("pagehide")?.(); windowEvents.get("unload")?.(); }
   };
   const context = {chrome, document, window, console, setTimeout, clearTimeout, setInterval, clearInterval, Array, Event};
   vm.runInNewContext(read("iframe/popup.js"), context, {filename: "popup.js"});
   return {
     get, stored, writes, removals,
-    pagehide: () => windowEvents.get("pagehide")(),
+    pagehide: () => { windowEvents.get("pagehide")(); windowEvents.get("unload")?.(); },
     resolveLoad: () => resolveDraftRead?.({"autoTypeDraft:17": stored.get("autoTypeDraft:17")}),
     canResolveLoad: () => Boolean(resolveDraftRead)
   };
