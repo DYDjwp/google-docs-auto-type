@@ -215,8 +215,8 @@ test("iframe typing survives a missing background message receiver", async () =>
     runtime: {
       getManifest: () => ({permissions: []}),
       onMessage: {addListener: fn => { listener = fn; }},
-      async sendMessage() {
-        backgroundCalls++;
+      async sendMessage(message) {
+        if (message.type === "AT_BG_WAIT") backgroundCalls++;
         throw new Error("Could not establish connection. Receiving end does not exist.");
       }
     }
