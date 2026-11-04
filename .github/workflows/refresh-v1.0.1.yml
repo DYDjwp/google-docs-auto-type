@@ -1,0 +1,77 @@
+name: Refresh existing Auto Type v1.0.1 release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/refresh-v1.0.1.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  republish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Run syntax checks and regression tests
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            test "$(node -p "require('./${edition}/manifest.json').version")" = "1.0.1"
+            for script in background.js content.js main-bridge.js popup.js; do
+              node --check "$edition/$script"
+            done
+          done
+          node --test tests/reliability-v1.0.1.cjs
+
+      - name: Build two unpacked extension archives
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            (cd "$edition" && zip -q -r "$GITHUB_WORKSPACE/auto-type-1.0.1-${edition}.zip" LICENSE README.md background.js content.js main-bridge.js manifest.json popup.css popup.html popup.js icons/)
+            unzip -l "auto-type-1.0.1-${edition}.zip" | grep -q " manifest.json"
+          done
+
+      - name: Replace v1.0.1 tag, assets, and release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Workflow file is temporary. Keep the release tag on the preceding source commit.
+          SOURCE_SHA="$(git rev-parse HEAD^)"
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          ## What's changed
+
+          - **Recover drafts after errors:** Keep input text per Google Docs tab for the current browser session.
+          - **One-click Clear draft:** New button next to the character counter clears the current tab's input and stored draft without changing the Google Doc. Previously queued autosaves finish before the draft is removed.
+          - **Prevent accidental draft deletion:** Opening and quickly closing the popup cannot overwrite a saved draft with an empty input field while the original draft is loading.
+          - **Reliable session cleanup:** A keyboard-lock cleanup exception no longer leaves the extension unable to start subsequent typing runs.
+          - **Iframe startup resilience:** Retry brief unavailability of the Google Docs input iframe before starting to type.
+          - **More useful diagnostics:** Log the stage and iframe availability without logging typed text.
+
+          Both the iframe and Hybrid packages remain at version **1.0.1**. This release has been refreshed in place rather than renamed to v1.0.2.
+
+          ## Downloads
+
+          - `auto-type-1.0.1-iframe.zip` — recommended; no Chrome debugger permission.
+          - `auto-type-1.0.1-hybrid.zip` — optional CDP fallback; requires debugger permission.
+
+          Extract the ZIP and select its folder containing `manifest.json` with **Load unpacked** at `chrome://extensions`.
+
+          ## Known issue
+
+          Google Docs uses an undocumented iframe input interface, so it may occasionally ignore synthetic keystrokes (especially while a tab is in the background). The earlier intermittent repeat-run error is not currently reproducible. Please verify the final document contents after each run.
+          NOTES
+
+          # The published 1.0.1 tag must identify the updated source, not the previous package.
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/1.0.1" -f sha="$SOURCE_SHA" -F force=true >/dev/null
+          gh release upload 1.0.1 auto-type-1.0.1-iframe.zip auto-type-1.0.1-hybrid.zip --clobber
+          gh release edit 1.0.1 --title "Auto Type v1.0.1" --notes-file "$RUNNER_TEMP/release-notes.md" --draft=false --prerelease=false
+          RELEASE_ID="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/1.0.1" --jq .id)"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -f target_commitish="$SOURCE_SHA" >/dev/null
