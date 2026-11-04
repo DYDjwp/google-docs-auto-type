@@ -1,0 +1,70 @@
+name: Test and refresh existing v1.0.1 packages
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/refresh-messaging-v1.0.1.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: JavaScript checks and messaging regressions
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            test "$(node -p "require('./${edition}/manifest.json').version")" = "1.0.1"
+            for file in background.js content.js main-bridge.js popup.js; do
+              node --check "$edition/$file"
+            done
+          done
+          node --test tests/reliability-v1.0.1.cjs
+      - name: Build iframe and Hybrid archives
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            (cd "$edition" && zip -q -r "$GITHUB_WORKSPACE/auto-type-1.0.1-${edition}.zip" LICENSE README.md background.js content.js main-bridge.js manifest.json popup.css popup.html popup.js icons/)
+            unzip -l "auto-type-1.0.1-${edition}.zip" | grep -q " manifest.json"
+          done
+      - name: Replace existing v1.0.1 release assets and notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SOURCE_SHA="$(git rev-parse HEAD^)"
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          ## What's changed
+
+          - **Background-independent iframe preparation:** The popup now injects the Google Docs MAIN-world typing bridge directly; an unavailable background message receiver no longer blocks iframe initialization.
+          - **Fallback for unavailable background pacing:** iframe mode switches to local delays if Chrome reports "Receiving end does not exist." This allows typing to continue, although background-tab timer throttling can reduce pacing accuracy.
+          - **Clearer diagnostics:** Errors identify the failing background command instead of being mistaken for an iframe failure.
+          - **One-click Clear draft:** Clear the popup's current text and the per-tab saved draft.
+          - **Reliable draft handling:** Avoid overwriting existing drafts while the popup is loading, and serialize saved-draft deletion with previous autosaves.
+          - **Reliable cleanup:** A failed keyboard-lock cleanup no longer permanently prevents a new session.
+          - **Retry transient iframe unavailability:** Limited retries for a missing Docs text-input target.
+
+          Both editions retain manifest version **1.0.1**. The existing Release and archives have been refreshed in place.
+
+          ## Downloads
+
+          - `auto-type-1.0.1-iframe.zip` — recommended for most users, no Chrome debugger permission.
+          - `auto-type-1.0.1-hybrid.zip` — optional CDP fallback, requires Chrome debugger permission.
+
+          Download and extract a package, then load the folder containing `manifest.json` at `chrome://extensions`. After reloading the extension, refresh any already-open Google Docs tab before starting a new session.
+
+          ## Known issue
+
+          Google Docs' internal iframe is undocumented and may sometimes ignore synthetic keyboard events. Local timing fallback may slow down when a Docs tab is in the background; always verify the resulting document text.
+          NOTES
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/1.0.1" -f sha="$SOURCE_SHA" -F force=true >/dev/null
+          gh release upload 1.0.1 auto-type-1.0.1-iframe.zip auto-type-1.0.1-hybrid.zip --clobber
+          gh release edit 1.0.1 --title "Auto Type v1.0.1" --notes-file "$RUNNER_TEMP/notes.md" --draft=false --prerelease=false
+          RELEASE_ID="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/1.0.1" --jq .id)"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -f target_commitish="$SOURCE_SHA" >/dev/null
