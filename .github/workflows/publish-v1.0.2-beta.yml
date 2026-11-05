@@ -1,0 +1,76 @@
+name: Publish Auto Type v1.0.2-beta
+
+on:
+  push:
+    branches: [beta/1.0.2]
+    paths:
+      - ".github/workflows/publish-v1.0.2-beta.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish-beta:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out beta source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Validate JavaScript and Chrome manifests
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            test "$(node -p "require('./${edition}/manifest.json').version")" = "1.0.2"
+            test "$(node -p "require('./${edition}/manifest.json').version_name")" = "1.0.2-beta"
+            for script in background.js content.js main-bridge.js popup.js; do
+              node --check "$edition/$script"
+            done
+          done
+          node --test tests/*.cjs
+
+      - name: Build iframe and Hybrid extension packages
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            (cd "$edition" && zip -q -r "$GITHUB_WORKSPACE/auto-type-1.0.2-beta-${edition}.zip" LICENSE README.md background.js content.js main-bridge.js manifest.json popup.css popup.html popup.js icons/)
+            unzip -l "auto-type-1.0.2-beta-${edition}.zip" | grep -q " manifest.json"
+          done
+
+      - name: Create beta pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SOURCE_SHA="$(git rev-parse HEAD^)"
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          ## New in v1.0.2-beta
+
+          - **Keyboard shortcuts:** Press **Alt + Shift + P** to pause or resume typing, and **Alt + Shift + X** to cancel the current task. On macOS, Alt is the Option key.
+          - **Change shortcuts:** Go to `chrome://extensions/shortcuts`. The popup shows the assigned combinations.
+          - **Control background typing:** Shortcuts select the active typing Google Docs tab when possible. If only one typing task is running, they also work when a different Chrome tab is selected.
+          - **Multiple-task safety:** If multiple Docs are typing in background tabs and no active document can be identified, the shortcut does nothing rather than cancel an arbitrary task.
+          - **Consistent state transitions:** Pause/Resume is an atomic toggle handled by the content script; Cancel uses the existing Stop action and **does not undo text already typed**.
+          - **Preserved behavior:** Existing draft recovery, Clear draft, iframe resilience, and CDP fallback remain available.
+
+          **Beta:** This is a pre-release for testing. It is published separately from the stable v1.0.1 release.
+
+          ## Downloads
+
+          - `auto-type-1.0.2-beta-iframe.zip` — recommended; does not require the debugger permission.
+          - `auto-type-1.0.2-beta-hybrid.zip` — includes CDP fallback; requires Chrome's debugger permission.
+
+          Download and extract one archive, then load the folder containing `manifest.json` using **Load unpacked** at `chrome://extensions`. Refresh existing Google Docs tabs after installing.
+
+          ## Known issue
+
+          Google Docs' internal iframe typing interface is undocumented and may occasionally ignore synthetic keyboard events. Chrome or OS-level shortcut conflicts can prevent default assignments; check `chrome://extensions/shortcuts` if a shortcut does not respond, and verify the final document text.
+          NOTES
+          if gh release view v1.0.2-beta >/dev/null 2>&1; then
+            gh release upload v1.0.2-beta auto-type-1.0.2-beta-iframe.zip auto-type-1.0.2-beta-hybrid.zip --clobber
+            gh release edit v1.0.2-beta --title "Auto Type v1.0.2-beta" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease=true
+          else
+            gh release create v1.0.2-beta auto-type-1.0.2-beta-iframe.zip auto-type-1.0.2-beta-hybrid.zip --target "$SOURCE_SHA" --title "Auto Type v1.0.2-beta" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease
+          fi
