@@ -10,6 +10,14 @@ This build of Auto Type uses the Google Docs input iframe by default and can fal
 4. Open the extension, paste text, configure the typing settings, and select **Start typing**.
 5. To clear saved popup text for the current document tab, use **Clear draft** next to the character count.
 
+## Keyboard shortcuts (beta)
+
+- **Alt/Option + Shift + P** — toggle pause / resume.
+- **Alt/Option + Shift + X** — cancel the current task (does not undo text already inserted).
+- Customize shortcuts at `chrome://extensions/shortcuts`. Chrome or operating-system shortcut conflicts may prevent defaults from being assigned.
+- If you are typing in multiple documents, the focused document's task takes priority. If exactly one document is typing, shortcuts also work from another tab. If multiple background tasks are active, the shortcut is ignored to avoid stopping the wrong task.
+- Shortcuts work only while Chrome has focus; they do not work globally in other apps.
+
 ## Input behavior
 
 - Characters are sent as synthetic input events through Google Docs' input iframe.

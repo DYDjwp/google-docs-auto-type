@@ -133,6 +133,20 @@ async function refresh() {
   } catch (e) { setMessage(`Cannot connect to the document: ${e.message}`, "error"); }
 }
 
+
+async function showShortcutHints() {
+  if (!chrome.commands?.getAll) return;
+  try {
+    const commands = await chrome.commands.getAll();
+    if (popupClosing) return;
+    const shortcut = name => commands.find(item => item.name === name)?.shortcut || "Unassigned";
+    $("shortcutHelp").textContent =
+      `Pause / resume: ${shortcut("auto-type-toggle-pause")} · Cancel: ${shortcut("auto-type-cancel")}`;
+  } catch (error) {
+    console.warn("[Auto Type] Unable to read keyboard shortcuts:", error?.message || String(error));
+  }
+}
+
 async function init() {
   const saved = await chrome.storage.local.get("autoTypeSettings");
   if (saved.autoTypeSettings && typeof saved.autoTypeSettings === "object") {
@@ -145,6 +159,7 @@ async function init() {
     options.speed = "medium";
   }
   renderOptions();
+  void showShortcutHints();
   const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
   if (tab && isDocs(tab.url)) {
     activeTabId = tab.id;

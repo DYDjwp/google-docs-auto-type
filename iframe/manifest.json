@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Auto Type",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Type text into Google Docs, including in background tabs, using its input iframe. No debugger permission.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -40,5 +40,20 @@
       ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "version_name": "1.0.2-beta",
+  "commands": {
+    "auto-type-toggle-pause": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "Pause or resume a typing task"
+    },
+    "auto-type-cancel": {
+      "suggested_key": {
+        "default": "Alt+Shift+X"
+      },
+      "description": "Cancel the current typing task"
+    }
+  }
 }

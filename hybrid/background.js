@@ -107,3 +107,48 @@ if (HAS_CDP) {
     }
   });
 }
+
+
+// Browser-level shortcuts work even when the popup is closed and while Docs
+// is receiving ordinary keystrokes. Find the active task rather than blindly
+// controlling the currently selected tab; typing may continue in background.
+const SHORTCUT_COMMANDS = Object.freeze({
+  "auto-type-toggle-pause": "AT_PAGE_TOGGLE_PAUSE",
+  "auto-type-cancel": "AT_PAGE_STOP"
+});
+
+async function getShortcutTarget(commandTab) {
+  const tabs = await chrome.tabs.query({url: "https://docs.google.com/document/*"});
+  const running = (await Promise.all(tabs.map(async tab => {
+    if (!Number.isInteger(tab.id) || !isDocs(tab.url)) return null;
+    try {
+      const result = await chrome.tabs.sendMessage(tab.id, {type: "AT_PAGE_STATUS"});
+      return result?.ok && ["running", "paused"].includes(result.status?.state) ? tab : null;
+    } catch {
+      // Tabs without a live content script do not participate.
+      return null;
+    }
+  }))).filter(Boolean);
+
+  if (!running.length) return null;
+  const [foreground] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+  const hintedId = Number.isInteger(commandTab?.id) ? commandTab.id : foreground?.id;
+  const preferred = running.find(tab => tab.id === hintedId);
+  if (preferred) return preferred;
+
+  if (running.length === 1) return running[0];
+  // Multiple off-screen tasks are ambiguous; never cancel an arbitrary one.
+  console.warn("[Auto Type] Shortcut ignored: multiple background typing sessions.");
+  return null;
+}
+
+chrome.commands.onCommand.addListener((command, tab) => {
+  const type = SHORTCUT_COMMANDS[command];
+  if (!type) return;
+  void (async () => {
+    const target = await getShortcutTarget(tab);
+    if (!target) return;
+    const response = await chrome.tabs.sendMessage(target.id, {type});
+    if (!response?.ok) throw new Error(response?.error || "Shortcut command rejected");
+  })().catch(error => console.warn("[Auto Type] Shortcut failed:", command, error?.message || String(error)));
+});
