@@ -522,6 +522,11 @@
       case "AT_PAGE_START": respond(start(message)); break;
       case "AT_PAGE_PAUSE": pause(); respond({ok: true, status: getStatus()}); break;
       case "AT_PAGE_RESUME": resume(); respond({ok: true, status: getStatus()}); break;
+      case "AT_PAGE_TOGGLE_PAUSE":
+        if (job?.state === "running") pause();
+        else if (job?.state === "paused") resume();
+        respond({ok: true, status: getStatus()});
+        break;
       case "AT_PAGE_STOP": stop(); respond({ok: true, status: getStatus()}); break;
       default: respond({ok: false, error: "Unknown action"});
     }

@@ -4,7 +4,7 @@ Auto Type is a Chrome extension for entering text into Google Docs at a configur
 
 The project is distributed in two editions. Both use the same interface and typing controls; the Hybrid edition adds Chrome DevTools Protocol (CDP) as an alternative input method.
 
-**Current version: 1.0.1.** See [Releases](../../releases) for downloads and version-specific changes.
+**Beta: v1.0.2-beta.** This development branch is for testing shortcuts; the stable [v1.0.1 release](../../releases/tag/1.0.1) remains available. See [Releases](../../releases) for downloads and version-specific changes.
 
 ## Editions
 
@@ -13,7 +13,7 @@ The project is distributed in two editions. Both use the same interface and typi
 | Input method | Google Docs iframe | iframe first; CDP fallback |
 | Chrome debugger permission | Not required | Required |
 | Directory | [`iframe/`](iframe/) | [`hybrid/`](hybrid/) |
-| Release package | `auto-type-1.0.1-iframe.zip` | `auto-type-1.0.1-hybrid.zip` |
+| Beta release package | `auto-type-1.0.2-beta-iframe.zip` | `auto-type-1.0.2-beta-hybrid.zip` |
 
 The iframe edition is recommended unless CDP support is specifically needed. Chrome does not support requesting the `debugger` permission as an optional permission, so Hybrid is maintained as a separate extension package.
 
@@ -43,6 +43,16 @@ To install from a clone of this repository, load either the `iframe/` or `hybrid
 
 The extension attempts to preserve paragraph breaks, including consecutive blank lines. Verify the resulting document after a run, particularly when using background typing or advanced input settings.
 
+## Keyboard shortcuts (v1.0.2-beta)
+
+- **Pause / Resume:** `Alt+Shift+P` (Option + Shift + P on macOS).
+- **Cancel typing:** `Alt+Shift+X` (Option + Shift + X on macOS). This stops the task without deleting text already typed.
+- Configure or reassign shortcuts at `chrome://extensions/shortcuts`. Some combinations may conflict with Chrome or the operating system.
+- The command targets a typing task in the active Docs tab. When only one Docs task is running, it can also be controlled from another Chrome tab. When several tasks are running in background tabs with none in the foreground, the command is ignored rather than affecting the wrong document.
+- These are Chrome-scoped shortcuts, not system-global shortcuts; Chrome must be focused.
+
+
+
 ## Known issue
 
 - **Google Docs iframe input is not fully reliable:** Because it relies on an undocumented editor interface, Google Docs may occasionally ignore synthetic keyboard events without reporting an error (including during background typing). The previously reported intermittent repeat-run failure is not currently reproducible. Verify that the document contains the expected text after each run.
@@ -53,7 +63,7 @@ The extension attempts to preserve paragraph breaks, including consecutive blank
 - Adjustable timing variation, punctuation pauses, and random breaks.
 - Optional uncorrected typos, corrected typos, and longer breaks at word or sentence boundaries.
 - Support for line breaks, Backspace, and configurable Enter-event handling.
-- Pause, resume, and stop controls; optional keyboard lock and floating controls.
+- Pause, resume, and stop controls; optional keyboard lock, floating controls, and beta keyboard shortcuts.
 - Best-effort typing while another Chrome tab is active.
 
 ## Implementation
