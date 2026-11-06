@@ -159,27 +159,63 @@
     }
     if (!response?.ok) throw new Error(`Background message ${type} failed: ${response?.error || "No reply"}`);
   }
-  const noBackgroundReceiver = error =>
-    /Could not establish connection\. Receiving end does not exist\./.test(error?.message || "");
+  // Only retry missing/closed receivers. API errors and invalid commands
+  // must still surface immediately instead of being silently swallowed.
+  const transientBackgroundFailure = error =>
+    /Could not establish connection\. Receiving end does not exist\.|(?:message (?:port|channel)|response channel) closed before a response was received/i
+      .test(error?.message || "");
 
-  // A Docs tab's timers are throttled after it becomes backgrounded.
-  // Schedule short waits in the extension service worker instead. Each
-  // round trip also keeps the worker active during an ongoing session.
+  // Chrome normally wakes an idle MV3 worker on incoming extension events.
+  // A failed message may be transient (e.g. during extension reload/startup).
+  // Do not keep the worker alive unnecessarily; retry, then degrade gracefully.
+  const BACKGROUND_RETRY_DELAYS_MS = [0, 120, 260];
+  const BACKGROUND_RECOVERY_INTERVAL_MS = 5000;
+  const localWait = ms => new Promise(resolve => setTimeout(resolve, ms));
   let localWaitFallback = false;
+  let nextBackgroundProbeAt = 0;
+
   async function backgroundWait(milliseconds) {
     const delay = Math.max(0, Math.ceil(milliseconds));
-    if (!localWaitFallback) {
+    if (localWaitFallback && performance.now() < nextBackgroundProbeAt) {
+      await localWait(delay);
+      return;
+    }
+
+    // Three attempts on the first failure; only one probe per recovery
+    // interval. A failing worker must not be spammed on every keystroke.
+    const attempts = localWaitFallback ? 1 : BACKGROUND_RETRY_DELAYS_MS.length;
+    let lastError;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0) await localWait(BACKGROUND_RETRY_DELAYS_MS[attempt]);
       try {
         await sendToBackground("AT_BG_WAIT", {ms: delay});
+        if (localWaitFallback) {
+          console.info("[Auto Type] Background timing restored; switching back to service worker.", {
+            command: "AT_BG_WAIT"
+          });
+          localWaitFallback = false;
+          nextBackgroundProbeAt = 0;
+        }
         return;
       } catch (error) {
-        if (!noBackgroundReceiver(error)) throw error;
-        localWaitFallback = true;
-        // One warning per session. A backgrounded tab may throttle these timers.
-        console.warn("[Auto Type] Background receiver unavailable; using local timing for this iframe session.");
+        if (!transientBackgroundFailure(error)) throw error;
+        lastError = error;
       }
     }
-    await new Promise(resolve => setTimeout(resolve, delay));
+
+    // CDP cannot type when the worker is unavailable: fail explicitly.
+    if (job?.mode === "CDP") throw lastError;
+    if (!localWaitFallback) {
+      console.warn("[Auto Type] Background timing unavailable; switching to local timing and retrying recovery periodically.", {
+        command: "AT_BG_WAIT",
+        attempts,
+        reason: lastError?.message || "No background message receiver"
+      });
+    }
+    localWaitFallback = true;
+    nextBackgroundProbeAt = performance.now() + BACKGROUND_RECOVERY_INTERVAL_MS;
+    // Local timers are subject to Chrome background-tab throttling.
+    await localWait(delay);
   }
 
   async function pauseAwareWait(task, timeMs) {
@@ -503,6 +539,7 @@
     if (text.length > 200000) return {ok: false, error: "Maximum 200,000 characters per session."};
     const options = normalize(message.options);
     localWaitFallback = false;
+    nextBackgroundProbeAt = 0;
     job = {
       chars: Array.from(text), index: 0, state: "running", stopped: false,
       paused: false, options, mode: "", error: "", sinceRest: 0,

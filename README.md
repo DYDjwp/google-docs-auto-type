@@ -4,7 +4,7 @@ Auto Type is a Chrome extension for entering text into Google Docs at a configur
 
 The project is distributed in two editions. Both use the same interface and typing controls; the Hybrid edition adds Chrome DevTools Protocol (CDP) as an alternative input method.
 
-**Beta: v1.0.2-beta.** This development branch is for testing shortcuts; the stable [v1.0.1 release](../../releases/tag/1.0.1) remains available. See [Releases](../../releases) for downloads and version-specific changes.
+**Beta: v1.0.2-beta.** This branch includes the shortcut and background-recovery updates; the stable [v1.0.1 release](../../releases/tag/1.0.1) remains available. See [Releases](../../releases) for downloads and version-specific changes.
 
 ## Editions
 
@@ -68,7 +68,7 @@ The extension attempts to preserve paragraph breaks, including consecutive blank
 
 ## Implementation
 
-The iframe input path runs in the Google Docs page's JavaScript context and sends synthetic keyboard events to `docs-texteventtarget-iframe`. The popup injects the input bridge directly, without depending on the service worker to prepare each run. The extension service worker provides timing assistance to reduce background-tab timer throttling; if its messaging receiver is temporarily unavailable, iframe mode uses local timers as a fallback.
+The iframe input path runs in the Google Docs page's JavaScript context and sends synthetic keyboard events to `docs-texteventtarget-iframe`. The popup injects the input bridge directly, without depending on the service worker to prepare each run. The extension service worker provides timing assistance to reduce background-tab timer throttling. If the receiver is temporarily unavailable, iframe mode retries up to three times, uses local timers as a fallback, and periodically probes the background connection (about every five seconds while pacing runs) to restore service-worker timing. Chrome may throttle the fallback's timers in background tabs; CDP mode requires the worker.
 
 The Hybrid edition can use CDP if the iframe path reports a detectable failure, or when CDP is selected manually. A successful event dispatch does not prove that Google Docs accepted or saved the edit. Silent input failures cannot always be detected.
 

@@ -242,7 +242,7 @@ test("iframe typing survives a missing background message receiver", async () =>
   const status = send("AT_PAGE_STATUS").status;
   assert.equal(status.state, "done", status.error);
   assert.equal(status.index, 2);
-  assert.equal(backgroundCalls, 1, "only first background wait attempted after failover");
+  assert.equal(backgroundCalls, 3, "three bounded attempts before local fallback");
   assert.equal(warnings.length, 1, "only one fallback warning per session");
 });
 
