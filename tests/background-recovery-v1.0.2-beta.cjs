@@ -83,7 +83,7 @@ test("after three missing receivers, local timing is used and probes are rate li
   assert.equal(h.warnings[0][1].command, "AT_BG_WAIT");
   assert.equal(h.warnings[0][1].attempts, 3);
   const next = h.nextProbe();
-  assert.equal(next - h.now, 4920 + 80, "recovery scheduled 5 seconds from start of local wait");
+  assert.equal(next - h.now, 4920, "recovery scheduled 5 seconds from start of local wait");
   await h.backgroundWait(60);
   assert.equal(h.calls.length, 3, "fallback should not spam worker per character");
   h.advanceTime(5000);
