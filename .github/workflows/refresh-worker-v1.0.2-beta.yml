@@ -1,0 +1,75 @@
+name: Test and refresh v1.0.2-beta worker recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/refresh-worker-v1.0.2-beta.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out current beta source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Run syntax, manifest and reliability tests
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            test "$(node -p "require('./${edition}/manifest.json').version")" = "1.0.2"
+            test "$(node -p "require('./${edition}/manifest.json').version_name")" = "1.0.2-beta"
+            for script in background.js content.js main-bridge.js popup.js; do
+              node --check "$edition/$script"
+            done
+          done
+          node --test tests/*.cjs
+
+      - name: Package both extension editions
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            (cd "$edition" && zip -q -r "$GITHUB_WORKSPACE/auto-type-1.0.2-beta-${edition}.zip" LICENSE README.md background.js content.js main-bridge.js manifest.json popup.css popup.html popup.js icons/)
+            unzip -l "auto-type-1.0.2-beta-${edition}.zip" | grep -q " manifest.json"
+          done
+
+      - name: Replace v1.0.2-beta tag, assets, and release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SOURCE_SHA="$(git rev-parse HEAD^)"
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          ## What's new in v1.0.2-beta
+
+          - **Pause / Resume shortcut:** `Alt + Shift + P` (Option + Shift + P on macOS).
+          - **Cancel typing shortcut:** `Alt + Shift + X` (Option + Shift + X on macOS); already-inserted text stays in the document.
+          - **Safe shortcut routing:** The active typing document takes priority; if only one task is running, shortcuts can also control it from another Chrome tab. Ambiguous multiple background tasks are ignored.
+          - **Service Worker reconnection:** On a missing background message receiver, iframe mode retries up to **3 times** with short backoff before falling back to local timing. While degraded, it probes the worker about every **5 seconds** during ongoing waits and switches back automatically when available.
+          - **Targeted diagnostics:** One warning on fallback and one information log on recovery, with the failing command and attempt count. Unexpected worker errors still fail explicitly; CDP requires a reachable worker.
+          - **Preserved 1.0.1 features:** Draft recovery, one-click Clear draft, iframe initialization resilience, and session cleanup protections.
+
+          **Pre-release:** This is a beta build. Mouse Lock is *not included*; it is being considered for v1.0.3. Stable v1.0.1 remains available separately.
+
+          ## Downloads
+
+          - `auto-type-1.0.2-beta-iframe.zip` — recommended; no Chrome debugger permission required.
+          - `auto-type-1.0.2-beta-hybrid.zip` — with CDP fallback; requires Chrome debugger permission.
+
+          Extract the ZIP, then use **Load unpacked** from `chrome://extensions` and select its folder with `manifest.json`. Reload your Google Docs tabs after replacing extension code. Customize keyboard shortcuts at `chrome://extensions/shortcuts`.
+
+          ## Known issue
+
+          Google Docs' internal iframe is undocumented and may sometimes ignore synthetic keyboard events. Background tabs can throttle local timers while the Service Worker is unreachable; verify the resulting document after each run.
+          NOTES
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/v1.0.2-beta" -f sha="$SOURCE_SHA" -F force=true >/dev/null
+          gh release upload v1.0.2-beta auto-type-1.0.2-beta-iframe.zip auto-type-1.0.2-beta-hybrid.zip --clobber
+          gh release edit v1.0.2-beta --title "Auto Type v1.0.2-beta" --notes-file "$RUNNER_TEMP/notes.md" --prerelease=true --draft=false
+          RELEASE_ID="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.0.2-beta" --jq .id)"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -f target_commitish="$SOURCE_SHA" >/dev/null
