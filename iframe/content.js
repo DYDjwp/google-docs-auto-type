@@ -294,7 +294,7 @@
       running: `Typing · ${status.index} / ${status.total} · ${status.mode || "preparing"}`,
       paused: `Paused · ${status.index} / ${status.total}`,
       done: `Sent ${status.total} characters · verify your doc`,
-      stopped: `Stopped · ${status.index} / ${status.total}`,
+      stopped: `Stopped · ${status.index} / ${status.total}${status.error ? " · " + status.error : ""}`,
       error: `Error: ${status.error || "typing failed"}`,
       idle: "Ready"
     };
@@ -359,6 +359,44 @@
     return at === "sentence" ? sentence : at === "word" ? word : sentence || word;
   }
 
+  // The private Docs iframe API does not expose a dependable cursor-position
+  // guarantee. Watch trusted user interactions while a temporary typo exists,
+  // and stop rather than issuing Backspace at a potentially moved caret.
+  const CORRECTION_INTERRUPTED =
+    "Correction interrupted; a temporary typo may remain. Review the last character.";
+  function guardCorrectionPosition(task) {
+    const observed = new Set();
+    const types = ["pointerdown", "mousedown", "keydown"];
+    const onUserAction = event => {
+      if (job !== task || !task.correctionPending || !event.isTrusted) return;
+      task.correctionUnsafe = true;
+      if (task.state === "running" || task.state === "paused") stop();
+    };
+    const watch = node => {
+      if (!node || observed.has(node)) return;
+      for (const type of types) node.addEventListener(type, onUserAction, true);
+      observed.add(node);
+    };
+    watch(document);
+    const poll = () => {
+      try {
+        const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
+        watch(frame?.contentDocument);
+      } catch { /* Docs may replace or isolate its input iframe. */ }
+    };
+    poll();
+    const interval = setInterval(poll, 1000);
+    return () => {
+      clearInterval(interval);
+      for (const node of observed) {
+        for (const type of types) {
+          try { node.removeEventListener(type, onUserAction, true); }
+          catch (error) { console.warn("[Auto Type] Correction guard cleanup failed", error); }
+        }
+      }
+    };
+  }
+
   async function sendCharacter(task, character) {
     if (task.mode === "iframe") {
       try { await insertViaIframe(character, task.options.enterStrategy); return; }
@@ -392,6 +430,8 @@
   }
   function pause() {
     if (!job || job.state !== "running") return;
+    // Resuming after a pause cannot guarantee the old cursor position.
+    if (job.correctionPending) job.correctionUnsafe = true;
     job.paused = true;
     job.state = "paused";
     updateOverlay();
@@ -406,6 +446,10 @@
   }
   function stop() {
     if (!job || !["running", "paused"].includes(job.state)) return;
+    if (job.correctionPending) {
+      job.correctionUnsafe = true;
+      job.error = CORRECTION_INTERRUPTED;
+    }
     job.stopped = true;
     job.paused = false;
     job.state = "stopped";
@@ -415,6 +459,7 @@
   }
 
   async function run(task) {
+    let disableCorrectionGuard = () => {};
     try {
       task.phase = "preparing input iframe";
       task.mode = task.options.mode === "cdp" ? "CDP" : "iframe";
@@ -428,6 +473,7 @@
       }
       if (!isActive(task)) return;
       task.phase = "typing";
+      disableCorrectionGuard = guardCorrectionPosition(task);
       enableKeyboardLock(task);
       if (task.options.showOverlay) ensureOverlay();
       else if (overlay?.host?.isConnected) overlay.host.remove();
@@ -448,17 +494,35 @@
         const leaveTypo = accidental && !correction && task.options.typo &&
           Math.random() * 100 < task.options.typoChance;
 
+        let targetSent = false;
         if (correction) {
-          await sendCharacter(task, accidental);
-          // Even if Stop is pressed during the pause, undo the temporary
-          // wrong character before stopping so the Doc is not left corrupted.
-          await pauseAwareWait(task, task.options.fixPauseMs);
-          await sendBackspace(task);
-          await pauseAwareWait(task, Math.min(250, task.options.fixPauseMs / 2));
-          if (isActive(task)) await sendCharacter(task, character);
+          task.correctionPending = true;
+          task.correctionUnsafe = false;
+          try {
+            await sendCharacter(task, accidental);
+            await pauseAwareWait(task, task.options.fixPauseMs);
+            if (!isActive(task) || task.correctionUnsafe) {
+              // A moved cursor could make Backspace erase the user's text.
+              if (isActive(task)) stop();
+              break;
+            }
+            await sendBackspace(task);
+            await pauseAwareWait(task, Math.min(250, task.options.fixPauseMs / 2));
+            if (!isActive(task) || task.correctionUnsafe) {
+              if (isActive(task)) stop();
+              break;
+            }
+            await sendCharacter(task, character);
+            targetSent = true;
+          } finally {
+            task.correctionPending = false;
+          }
         } else {
           await sendCharacter(task, leaveTypo ? accidental : character);
+          targetSent = true;
         }
+        // Do not report completion for a cancelled partial correction.
+        if (!targetSent) break;
         task.index = i + 1;
         task.sinceRest += 1;
         updateOverlay();
@@ -520,6 +584,8 @@
         }
       } finally {
         // Always release the session guard, even when cleanup itself throws.
+        try { disableCorrectionGuard(); }
+        catch (error) { console.warn("[Auto Type] Correction guard cleanup failed", error); }
         task.finalized = true;
         try { updateOverlay(); }
         catch (error) { console.warn("[Auto Type] overlay update failed", error); }
@@ -543,7 +609,8 @@
     job = {
       chars: Array.from(text), index: 0, state: "running", stopped: false,
       paused: false, options, mode: "", error: "", sinceRest: 0,
-      nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, finalized: false
+      nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, finalized: false,
+      correctionPending: false, correctionUnsafe: false
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

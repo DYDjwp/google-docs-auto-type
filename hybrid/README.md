@@ -2,6 +2,10 @@
 
 This build of Auto Type uses the Google Docs input iframe by default and can fall back to Chrome DevTools Protocol (CDP). It requires Chrome's `debugger` permission at installation.
 
+## Development version 1.0.3
+
+This branch includes safe interruption handling for typo correction, closed-tab draft cleanup, and a draft-quota recovery path. It has not been published as a Release.
+
 ## Install
 
 1. Open `chrome://extensions` and enable **Developer mode**.

@@ -2,6 +2,10 @@
 
 This is the iframe-only build of Auto Type. It enters text through Google Docs' internal input iframe and does not request Chrome's `debugger` permission.
 
+## Development version 1.0.3
+
+This branch includes safe interruption handling for typo correction, closed-tab draft cleanup, and a draft-quota recovery path. It has not been published as a Release.
+
 ## Install
 
 1. Open `chrome://extensions` and enable **Developer mode**.

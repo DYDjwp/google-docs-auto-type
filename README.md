@@ -4,7 +4,7 @@ Auto Type is a Chrome extension for entering text into Google Docs at a configur
 
 The project is distributed in two editions. Both use the same interface and typing controls; the Hybrid edition adds Chrome DevTools Protocol (CDP) as an alternative input method.
 
-**Current stable version: v1.0.2.** Download the latest version from [GitHub Releases](../../releases/latest). Older releases, including v1.0.1, remain available in [Releases](../../releases).
+**Unreleased development version: v1.0.3-dev.** The current stable download is [v1.0.2](../../releases/tag/v1.0.2). This branch has not been published as a Beta or Stable Release.
 
 ## Editions
 
@@ -13,7 +13,7 @@ The project is distributed in two editions. Both use the same interface and typi
 | Input method | Google Docs iframe | iframe first; CDP fallback |
 | Chrome debugger permission | Not required | Required |
 | Directory | [`iframe/`](iframe/) | [`hybrid/`](hybrid/) |
-| Release package | `auto-type-1.0.2-iframe.zip` | `auto-type-1.0.2-hybrid.zip` |
+| Latest stable package | `auto-type-1.0.2-iframe.zip` | `auto-type-1.0.2-hybrid.zip` |
 
 The iframe edition is recommended unless CDP support is specifically needed. Chrome does not support requesting the `debugger` permission as an optional permission, so Hybrid is maintained as a separate extension package.
 
@@ -52,6 +52,12 @@ The extension attempts to preserve paragraph breaks, including consecutive blank
 - These are Chrome-scoped shortcuts, not system-global shortcuts; Chrome must be focused.
 
 
+
+## v1.0.3 development changes (unreleased)
+
+- Fix typo correction now avoids Backspace when a task is paused, cancelled, or real input indicates the insertion point may have moved. A temporary typo can remain rather than risk deleting existing text; the task reports this explicitly.
+- Cancelled partial corrections no longer advance the reported character progress.
+- Close-tab events remove per-tab session drafts. When a draft cannot be saved on Start, the popup reclaims drafts from tabs that no longer exist and retries once. If saving still fails, typing will not start and the popup keeps the source text visible with recovery instructions.
 
 ## Known issue
 

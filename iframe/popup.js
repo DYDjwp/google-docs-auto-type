@@ -56,6 +56,44 @@ function updateTextCount() {
   $("count").textContent = `${Array.from(value).length.toLocaleString()} chars · ${lines} ${lines === 1 ? "line" : "lines"}`;
 }
 
+// On a quota error, reclaim drafts belonging to tabs that no longer exist.
+// Only our own namespace is removed; active tab drafts and user settings stay.
+async function reclaimClosedTabDrafts() {
+  const [tabs, stored] = await Promise.all([
+    chrome.tabs.query({}),
+    chrome.storage.session.get(null)
+  ]);
+  const live = new Set(tabs.map(tab => tab.id));
+  const stale = Object.keys(stored).filter(key => {
+    const match = /^autoTypeDraft:(\d+)$/.exec(key);
+    return match && !live.has(Number(match[1]));
+  });
+  if (stale.length) await chrome.storage.session.remove(stale);
+  return stale.length;
+}
+
+async function saveDraftForStart(text) {
+  try {
+    await saveDraft(text);
+    return;
+  } catch (firstError) {
+    console.warn("[Auto Type] Could not save draft; reclaiming closed-tab drafts before retry.");
+  }
+  try {
+    await reclaimClosedTabDrafts();
+    await saveDraft(text);
+  } catch (error) {
+    // Do not close the popup or start typing without making the data-loss
+    // risk explicit. The textarea remains available for copying the input.
+    throw new Error(
+      "Draft could not be saved. Session storage may be full or unavailable. " +
+      "Close unused tabs or clear old drafts, then retry. " +
+      "Your text is still in this popup: copy it before closing. " +
+      `Details: ${error?.message || String(error)}`
+    );
+  }
+}
+
 function setMessage(message, tone = "idle") {
   $("state").textContent = message;
   $("state").className = `state ${tone}`;
@@ -119,7 +157,7 @@ function renderStatus(status) {
     running: `Typing ${index}/${total} · ${mode || "preparing"}`,
     paused: `Paused at ${index}/${total}`,
     done: `Sent ${total} characters · Please verify the document`,
-    stopped: `Stopped at ${index}/${total}`,
+    stopped: `Stopped at ${index}/${total}${error ? " · " + error : ""}`,
     error: `Error: ${error}`
   };
   setMessage(messages[state] || "Ready", state === "error" ? "error" : state === "done" ? "ok" : "idle");
@@ -274,7 +312,7 @@ $("start").addEventListener("click", async () => {
   try {
     // Always finish saving the source text before this popup can close.
     clearTimeout(draftSaveTimer);
-    await saveDraft(text);
+    await saveDraftForStart(text);
     // Install the MAIN-world bridge from the popup, independently of the
     // background service worker. This prevents a missing runtime.onMessage
     // receiver from aborting an otherwise healthy iframe typing session.

@@ -109,6 +109,14 @@ if (HAS_CDP) {
 }
 
 
+// Remove session-only drafts when their tab closes. Register this at top
+// level in both editions, not only when Chrome debugger permission exists.
+const draftKeyForTab = tabId => `autoTypeDraft:${tabId}`;
+chrome.tabs.onRemoved.addListener(tabId => {
+  void chrome.storage.session.remove(draftKeyForTab(tabId))
+    .catch(error => console.warn("[Auto Type] Draft cleanup failed for closed tab", tabId, error));
+});
+
 // Browser-level shortcuts work even when the popup is closed and while Docs
 // is receiving ordinary keystrokes. Find the active task rather than blindly
 // controlling the currently selected tab; typing may continue in background.
