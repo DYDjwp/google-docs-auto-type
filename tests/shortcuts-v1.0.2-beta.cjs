@@ -65,12 +65,12 @@ function shortcutHarness(edition = "iframe") {
   };
 }
 
-test("both editions register identical beta shortcut commands", () => {
+test("both editions register identical shortcut commands", () => {
   const iframe = JSON.parse(read("iframe/manifest.json"));
   const hybrid = JSON.parse(read("hybrid/manifest.json"));
   for (const manifest of [iframe, hybrid]) {
-    assert.equal(manifest.version, "1.0.2");
-    assert.equal(manifest.version_name, "1.0.2");
+    assert.equal(manifest.version, "1.0.3");
+    assert.equal(manifest.version_name, "1.0.3-dev");
     assert.equal(manifest.commands["auto-type-toggle-pause"].suggested_key.default, "Alt+Shift+P");
     assert.equal(manifest.commands["auto-type-cancel"].suggested_key.default, "Alt+Shift+X");
   }
