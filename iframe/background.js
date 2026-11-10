@@ -137,7 +137,7 @@ async function getShortcutTarget(commandTab) {
   // cross-tab routing; never choose an arbitrary task when several run.
   const candidateIds = [commandTab?.id, foreground?.id]
     .filter(id => Number.isInteger(id));
-  const preferred = running.find(tab => candidateIds.includes(tab.id));
+  const preferred = candidateIds.map(id => running.find(tab => tab.id === id)).find(Boolean);
   if (preferred) return preferred;
 
   if (running.length === 1) return running[0];

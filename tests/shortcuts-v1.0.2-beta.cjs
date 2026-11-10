@@ -94,6 +94,16 @@ for (const edition of ["iframe", "hybrid"]) {
       ["AT_PAGE_TOGGLE_PAUSE", "AT_PAGE_TOGGLE_PAUSE", "AT_PAGE_STOP"]);
   });
 
+  test(edition + ": hinted running tab wins over a different foreground task", async () => {
+    const h = shortcutHarness(edition);
+    h.states.set(12, "running");
+    h.setFocused(11);
+    await h.fire("auto-type-cancel", {id: 12});
+    assert.equal(h.states.get(11), "running");
+    assert.equal(h.states.get(12), "stopped");
+    assert.deepEqual(h.sent.map(item => item.tabId), [12]);
+  });
+
   test(edition + ": prefers a foreground task if the hinted tab is not running", async () => {
     const h = shortcutHarness(edition);
     h.states.set(12, "running");
