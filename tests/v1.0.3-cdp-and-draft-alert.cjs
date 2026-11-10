@@ -82,7 +82,9 @@ function makeCdpHarness({fallback = false, blockCorrection = false} = {}) {
   const logger = {warn(){},info(){},error(){}};
   vm.runInNewContext(read("hybrid/content.js"), {
     chrome,document,window:{},Math:rand,console:logger,
-    performance:{now:() => clock},setTimeout,clearTimeout,setInterval,clearInterval,
+    performance:{now:() => clock},setTimeout,clearTimeout,
+    // Avoid real polling timers in the isolated content-script harness.
+    setInterval: () => 1, clearInterval: () => {},
     Event:FakeEvent,CustomEvent:FakeEvent
   }, {filename:"hybrid/content.js"});
   const send = (type,data={}) => {
