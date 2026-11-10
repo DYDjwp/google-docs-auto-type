@@ -1,0 +1,30 @@
+name: Validate Auto Type v1.0.3 development
+
+on:
+  push:
+    branches:
+      - dev/1.0.3
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check both Chrome extension editions
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            node -e "const m=require('./${edition}/manifest.json');if(m.version !== '1.0.3' || m.version_name !== '1.0.3-dev')process.exit(1)"
+            for script in background.js content.js main-bridge.js popup.js; do
+              node --check "$edition/$script"
+            done
+          done
+      - name: Run existing and v1.0.3 regression tests
+        run: node --test tests/*.cjs
