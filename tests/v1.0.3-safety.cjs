@@ -276,8 +276,12 @@ test("P2: persistent quota errors leave the source text in the popup and never s
   assert.equal(h.closed, false);
   assert.equal(h.get("text").value, "Keep this text");
   assert.equal(h.get("start").disabled, false);
-  assert.match(h.get("state").textContent, /copy it before closing/);
-  h.close();
+  try {
+    assert.equal(h.get("draftError").hidden, false);
+    assert.match(h.get("draftErrorText").textContent, /copy it before closing/);
+  } finally {
+    h.close();
+  }
 });
 
 test("P2: closing a tab removes its session draft in both editions", async () => {
