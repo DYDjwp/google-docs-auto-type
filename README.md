@@ -4,7 +4,7 @@ Auto Type is a Chrome extension for entering text into Google Docs at a configur
 
 The project is distributed in two editions. Both use the same interface and typing controls; the Hybrid edition adds Chrome DevTools Protocol (CDP) as an alternative input method.
 
-**Beta: v1.0.2-beta.** This branch includes the shortcut and background-recovery updates; the stable [v1.0.1 release](../../releases/tag/1.0.1) remains available. See [Releases](../../releases) for downloads and version-specific changes.
+**Current stable version: v1.0.2.** Download the latest version from [GitHub Releases](../../releases/latest). Older releases, including v1.0.1, remain available in [Releases](../../releases).
 
 ## Editions
 
@@ -13,7 +13,7 @@ The project is distributed in two editions. Both use the same interface and typi
 | Input method | Google Docs iframe | iframe first; CDP fallback |
 | Chrome debugger permission | Not required | Required |
 | Directory | [`iframe/`](iframe/) | [`hybrid/`](hybrid/) |
-| Beta release package | `auto-type-1.0.2-beta-iframe.zip` | `auto-type-1.0.2-beta-hybrid.zip` |
+| Release package | `auto-type-1.0.2-iframe.zip` | `auto-type-1.0.2-hybrid.zip` |
 
 The iframe edition is recommended unless CDP support is specifically needed. Chrome does not support requesting the `debugger` permission as an optional permission, so Hybrid is maintained as a separate extension package.
 
@@ -43,7 +43,7 @@ To install from a clone of this repository, load either the `iframe/` or `hybrid
 
 The extension attempts to preserve paragraph breaks, including consecutive blank lines. Verify the resulting document after a run, particularly when using background typing or advanced input settings.
 
-## Keyboard shortcuts (v1.0.2-beta)
+## Keyboard shortcuts
 
 - **Pause / Resume:** `Alt+Shift+P` (Option + Shift + P on macOS).
 - **Cancel typing:** `Alt+Shift+X` (Option + Shift + X on macOS). This stops the task without deleting text already typed.
@@ -55,7 +55,7 @@ The extension attempts to preserve paragraph breaks, including consecutive blank
 
 ## Known issue
 
-- **Google Docs iframe input is not fully reliable:** Because it relies on an undocumented editor interface, Google Docs may occasionally ignore synthetic keyboard events without reporting an error (including during background typing). The previously reported intermittent repeat-run failure is not currently reproducible. Verify that the document contains the expected text after each run.
+- **Google Docs iframe input is not fully reliable:** Because it relies on an undocumented editor interface, Google Docs may occasionally ignore synthetic keyboard events without reporting an error (including during background typing). Verify that the document contains the expected text after each run.
 
 ## Features
 
@@ -63,7 +63,7 @@ The extension attempts to preserve paragraph breaks, including consecutive blank
 - Adjustable timing variation, punctuation pauses, and random breaks.
 - Optional uncorrected typos, corrected typos, and longer breaks at word or sentence boundaries.
 - Support for line breaks, Backspace, and configurable Enter-event handling.
-- Pause, resume, and stop controls; optional keyboard lock, floating controls, and beta keyboard shortcuts.
+- Pause, resume, and stop controls; optional keyboard lock, floating controls, and keyboard shortcuts.
 - Best-effort typing while another Chrome tab is active.
 
 ## Implementation

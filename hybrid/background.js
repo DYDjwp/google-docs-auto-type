@@ -132,8 +132,12 @@ async function getShortcutTarget(commandTab) {
 
   if (!running.length) return null;
   const [foreground] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
-  const hintedId = Number.isInteger(commandTab?.id) ? commandTab.id : foreground?.id;
-  const preferred = running.find(tab => tab.id === hintedId);
+  // Chrome may supply a command tab that is not running a task.
+  // Fall back to the last focused window's active tab before considering
+  // cross-tab routing; never choose an arbitrary task when several run.
+  const candidateIds = [commandTab?.id, foreground?.id]
+    .filter(id => Number.isInteger(id));
+  const preferred = running.find(tab => candidateIds.includes(tab.id));
   if (preferred) return preferred;
 
   if (running.length === 1) return running[0];

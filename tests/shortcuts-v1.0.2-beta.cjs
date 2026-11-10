@@ -70,7 +70,7 @@ test("both editions register identical beta shortcut commands", () => {
   const hybrid = JSON.parse(read("hybrid/manifest.json"));
   for (const manifest of [iframe, hybrid]) {
     assert.equal(manifest.version, "1.0.2");
-    assert.equal(manifest.version_name, "1.0.2-beta");
+    assert.equal(manifest.version_name, "1.0.2");
     assert.equal(manifest.commands["auto-type-toggle-pause"].suggested_key.default, "Alt+Shift+P");
     assert.equal(manifest.commands["auto-type-cancel"].suggested_key.default, "Alt+Shift+X");
   }
@@ -92,6 +92,16 @@ for (const edition of ["iframe", "hybrid"]) {
     assert.equal(h.states.get(11), "stopped");
     assert.deepEqual(h.sent.map(item => item.type),
       ["AT_PAGE_TOGGLE_PAUSE", "AT_PAGE_TOGGLE_PAUSE", "AT_PAGE_STOP"]);
+  });
+
+  test(edition + ": prefers a foreground task if the hinted tab is not running", async () => {
+    const h = shortcutHarness(edition);
+    h.states.set(12, "running");
+    h.setFocused(12);
+    await h.fire("auto-type-cancel", {id: 99});
+    assert.equal(h.states.get(11), "running");
+    assert.equal(h.states.get(12), "stopped");
+    assert.deepEqual(h.sent.map(item => item.tabId), [12]);
   });
 
   test(edition + ": one background task can be paused from another tab", async () => {
