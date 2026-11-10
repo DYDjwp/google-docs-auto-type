@@ -75,6 +75,7 @@ async function reclaimClosedTabDrafts() {
 async function saveDraftForStart(text) {
   try {
     await saveDraft(text);
+    hideDraftSaveError();
     return;
   } catch (firstError) {
     console.warn("[Auto Type] Could not save draft; reclaiming closed-tab drafts before retry.");
@@ -82,15 +83,18 @@ async function saveDraftForStart(text) {
   try {
     await reclaimClosedTabDrafts();
     await saveDraft(text);
+    hideDraftSaveError();
   } catch (error) {
     // Do not close the popup or start typing without making the data-loss
     // risk explicit. The textarea remains available for copying the input.
-    throw new Error(
+    const failure = new Error(
       "Draft could not be saved. Session storage may be full or unavailable. " +
       "Close unused tabs or clear old drafts, then retry. " +
       "Your text is still in this popup: copy it before closing. " +
       `Details: ${error?.message || String(error)}`
     );
+    failure.code = "DRAFT_SAVE_FAILED";
+    throw failure;
   }
 }
 
@@ -98,6 +102,18 @@ function setMessage(message, tone = "idle") {
   $("state").textContent = message;
   $("state").className = `state ${tone}`;
 }
+
+// The session status is polled every 850ms; persistent storage failures
+// need their own accessible, multiline notice independent of renderStatus.
+function showDraftSaveError(message) {
+  $("draftErrorText").textContent = message;
+  $("draftError").hidden = false;
+}
+function hideDraftSaveError() {
+  $("draftError").hidden = true;
+  $("draftErrorText").textContent = "";
+}
+$("dismissDraftError").addEventListener("click", hideDraftSaveError);
 
 function renderOptions() {
   for (const key of FIELDS) $(key).value = options[key];
@@ -327,7 +343,15 @@ $("start").addEventListener("click", async () => {
     if (!answer?.ok) throw new Error(answer?.error || "Could not start");
     renderStatus(answer.status);
     window.close();
-  } catch (e) { setMessage(e.message, "error"); $("start").disabled = false; }
+  } catch (e) {
+    if (e?.code === "DRAFT_SAVE_FAILED") {
+      showDraftSaveError(e.message);
+      setMessage("Draft not saved", "error");
+    } else {
+      setMessage(e.message, "error");
+    }
+    $("start").disabled = false;
+  }
 });
 $("pause").addEventListener("click", async () => {
   try {

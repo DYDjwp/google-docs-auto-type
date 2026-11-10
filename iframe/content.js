@@ -369,6 +369,14 @@
     const types = ["pointerdown", "mousedown", "keydown"];
     const onUserAction = event => {
       if (job !== task || !task.correctionPending || !event.isTrusted) return;
+      // CDP Input.dispatchKeyEvent creates trusted DOM events. During our
+      // own Backspace command, ignore only its expected keydown. Other real
+      // keys, mouse buttons and pointer events must still stop correction.
+      // Chrome does not provide a definitive origin bit for CDP events:
+      // this narrow in-flight exception minimizes accidental suppression.
+      if (task.mode === "CDP" && task.cdpKeyInFlight &&
+          event.type === "keydown" &&
+          (event.key === "Backspace" || event.keyCode === 8)) return;
       task.correctionUnsafe = true;
       if (task.state === "running" || task.state === "paused") stop();
     };

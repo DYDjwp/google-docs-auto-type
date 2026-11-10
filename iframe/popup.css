@@ -23,3 +23,9 @@ textarea{display:block;width:100%;height:152px;min-height:108px;max-height:250px
 .draft-tools{display:flex;align-items:center;gap:10px}.clear-draft{padding:3px 0;border:0;background:transparent;color:#9b5547;font-size:11px;font-weight:650}.clear-draft:hover:not(:disabled){text-decoration:underline}.clear-draft:focus-visible{outline:2px solid #8b655b;outline-offset:3px;border-radius:2px}
 
 .hotkey-help{font-size:10.5px;color:#5d7165;margin:11px 0 0;text-align:center;line-height:1.5}
+
+/* Persistent storage failure notice: never truncate long recovery guidance. */
+.draft-error{margin-top:10px;padding:10px 12px;border:1px solid #dbab9e;background:#fff1ec;border-radius:8px;color:#783c2f;line-height:1.5}
+.draft-error-text{margin:0;font-size:11px;white-space:normal;overflow-wrap:anywhere;word-break:normal}
+.draft-error button{display:block;margin-top:8px;border:1px solid #bd8779;background:#fff;color:#783c2f;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:600}
+.draft-error button:hover{background:#fce1d7}
