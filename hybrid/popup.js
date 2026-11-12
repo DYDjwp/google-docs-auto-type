@@ -9,14 +9,14 @@ const DEFAULTS = {
   typo: false, fixTypo: false, deepRest: false,
   typoChance: 1.5, fixChance: 3, fixPauseMs: 400,
   deepRestAt: "both", deepChance: 14, deepMinMs: 1300, deepMaxMs: 3600,
-  keyboardLock: false, showOverlay: true
+  keyboardLock: false, mouseLock: false, showOverlay: true
 };
 const PRESETS = {slow: 180, medium: 300, fast: 520};
 const FIELDS = ["cpm", "jitter", "punctuationMs", "newlineMs", "restMinChars",
   "restMaxChars", "restMinMs", "restMaxMs", "microChance", "microMinMs",
   "microMaxMs", "startDelay", "typoChance", "fixChance", "fixPauseMs",
   "deepChance", "deepMinMs", "deepMaxMs"];
-const TOGGLES = ["rest", "advancedMode", "keyboardLock", "showOverlay"];
+const TOGGLES = ["rest", "advancedMode", "keyboardLock", "mouseLock", "showOverlay"];
 const FEATURES = ["typo", "fixTypo", "deepRest"];
 const $ = id => document.getElementById(id);
 const HAS_CDP = chrome.runtime.getManifest().permissions.includes("debugger");

@@ -4,7 +4,7 @@ This build of Auto Type uses the Google Docs input iframe by default and can fal
 
 ## Development version 1.0.3
 
-This branch includes safe interruption handling for typo correction, closed-tab draft cleanup, and a draft-quota recovery path. It has not been published as a Release.
+This branch adds an Advanced Mode Mouse lock and includes safe interruption handling for typo correction, closed-tab draft cleanup, and a draft-quota recovery path. It has not been published as a Release.
 
 ## Install
 
@@ -21,6 +21,12 @@ This branch includes safe interruption handling for typo correction, closed-tab 
 - Customize shortcuts at `chrome://extensions/shortcuts`. Chrome or operating-system shortcut conflicts may prevent defaults from being assigned.
 - If you are typing in multiple documents, the focused document's task takes priority. If exactly one document is typing, shortcuts also work from another tab. If multiple background tasks are active, the shortcut is ignored to avoid stopping the wrong task.
 - Shortcuts work only while Chrome has focus; they do not work globally in other apps.
+
+## Advanced Mouse lock
+
+Enable **Advanced mode → During typing → Mouse lock** to ignore accidental mouse clicks, dragging, selection, and wheel scrolling in Google Docs while a task runs. It does not freeze the system cursor or require Pointer Lock API permissions. The floating Pause / Stop controls remain clickable. Mouse interactions work normally while paused and after Stop, completion, or error. Chrome keyboard shortcuts remain available.
+
+This is best-effort interception of trusted page events; Google Docs may handle some events earlier or in inaccessible frames. Verify the final document and use pause before deliberately changing the cursor.
 
 ## Input behavior
 

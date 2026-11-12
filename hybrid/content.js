@@ -7,6 +7,7 @@
   let job = null;
   let overlay = null;
   let keyboardLockController = null;
+  let mouseLockController = null;
   const PRESETS = {slow: 180, medium: 300, fast: 520};
   const NEIGHBORS = {
     a:"sqwz", b:"vghn", c:"xdfv", d:"sferxc", e:"wrsd", f:"drtgvc", g:"ftyhbv",
@@ -48,6 +49,7 @@
       deepMinMs: clamp(o.deepMinMs ?? 1300, 0, 120000),
       deepMaxMs: clamp(o.deepMaxMs ?? 3600, 0, 120000),
       keyboardLock: advancedMode && Boolean(o.keyboardLock),
+      mouseLock: advancedMode && Boolean(o.mouseLock),
       showOverlay: !advancedMode || o.showOverlay !== false
     };
   }
@@ -347,6 +349,72 @@
     if (cleanup) cleanup();
   }
 
+  // Advanced Mouse Lock is an in-page guard, NOT OS pointer capture or the
+  // browser Pointer Lock API. It prevents accidental edits without moving
+  // the caret, hiding the cursor, or stealing the Docs input iframe's focus.
+  // Capture on both window/document and the same-origin Docs input iframe.
+  // Don't leave a full-screen overlay in the page: a Chrome extension reload
+  // could strand a stale DOM shield and leave Docs impossible to click.
+  const MOUSE_LOCK_EVENTS = [
+    "pointerdown", "pointerup", "mousedown", "mouseup", "click",
+    "dblclick", "auxclick", "contextmenu", "dragstart", "drag",
+    "dragend", "drop", "selectstart", "wheel", "pointermove", "mousemove"
+  ];
+
+  function enableMouseLock(task) {
+    if (!task.options.mouseLock || mouseLockController) return;
+    const watched = new Set();
+    const onMouse = event => {
+      if (job !== task || task.state !== "running" || !event.isTrusted) return;
+      // Movement with no button held cannot change the editor selection.
+      if ((event.type === "pointermove" || event.type === "mousemove") &&
+          !event.buttons) return;
+
+      // The floating Pause / Stop controls must remain usable.
+      const host = overlay?.host;
+      if (host?.isConnected && (
+        event.composedPath?.().includes(host) || event.target === host ||
+        host.contains?.(event.target)
+      )) return;
+
+      if (event.cancelable) event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    const watch = node => {
+      if (!node?.addEventListener || watched.has(node)) return;
+      for (const type of MOUSE_LOCK_EVENTS) {
+        node.addEventListener(type, onMouse, {capture: true, passive: false});
+      }
+      watched.add(node);
+    };
+    watch(window);
+    watch(document);
+    const poll = () => {
+      try {
+        const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
+        watch(frame?.contentWindow);
+        watch(frame?.contentDocument);
+      } catch { /* Google Docs may replace or isolate its input iframe. */ }
+    };
+    poll();
+    const interval = setInterval(poll, 1000);
+    mouseLockController = () => {
+      clearInterval(interval);
+      for (const node of watched) {
+        for (const type of MOUSE_LOCK_EVENTS) {
+          try { node.removeEventListener(type, onMouse, true); }
+          catch (error) { console.warn("[Auto Type] Mouse lock cleanup failed", error); }
+        }
+      }
+    };
+  }
+
+  function disableMouseLock() {
+    const cleanup = mouseLockController;
+    mouseLockController = null;
+    if (cleanup) cleanup();
+  }
+
   function wrongLetter(char) {
     const candidates = NEIGHBORS[char.toLowerCase()];
     if (!candidates) return null; // avoid corrupting non-Latin text
@@ -442,6 +510,7 @@
     if (job.correctionPending) job.correctionUnsafe = true;
     job.paused = true;
     job.state = "paused";
+    disableMouseLock();
     updateOverlay();
     notifyBadge(job, true);
   }
@@ -449,6 +518,7 @@
     if (!job || job.state !== "paused") return;
     job.paused = false;
     job.state = "running";
+    enableMouseLock(job);
     updateOverlay();
     notifyBadge(job, true);
   }
@@ -461,6 +531,7 @@
     job.stopped = true;
     job.paused = false;
     job.state = "stopped";
+    disableMouseLock();
     updateOverlay();
     notifyBadge(job, true);
     // The typing loop handles debugger cleanup in its finally block.
@@ -481,10 +552,13 @@
       }
       if (!isActive(task)) return;
       task.phase = "typing";
-      disableCorrectionGuard = guardCorrectionPosition(task);
-      enableKeyboardLock(task);
       if (task.options.showOverlay) ensureOverlay();
       else if (overlay?.host?.isConnected) overlay.host.remove();
+      // Install mouse blocking before the correction guard, so blocked
+      // clicks don't themselves interrupt a pending Fix typo cycle.
+      enableMouseLock(task);
+      disableCorrectionGuard = guardCorrectionPosition(task);
+      enableKeyboardLock(task);
       updateOverlay();
       await pauseAwareWait(task, task.options.startDelay * 1000);
       task.nextRestAt = randomInt(
@@ -584,6 +658,8 @@
       });
     } finally {
       try {
+        try { disableMouseLock(); }
+        catch (error) { console.warn("[Auto Type] Mouse lock cleanup failed", error); }
         try { disableKeyboardLock(); }
         catch (error) { console.warn("[Auto Type] keyboard lock cleanup failed", error); }
         if (HAS_CDP && task.mode === "CDP") {

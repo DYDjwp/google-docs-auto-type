@@ -55,6 +55,8 @@ The extension attempts to preserve paragraph breaks, including consecutive blank
 
 ## v1.0.3 development changes (unreleased)
 
+- **Advanced Mouse lock:** Optional, off by default. While typing, blocks trusted mouse clicks, dragging, selection and wheel scrolling in the Google Docs tab without hiding the cursor or stealing keyboard focus. Pausing, stopping or finishing releases the guard; floating controls remain usable. This is best-effort DOM event interception, not an OS-wide pointer lock.
+
 - Fix typo correction now avoids Backspace when a task is paused, cancelled, or real input indicates the insertion point may have moved. A temporary typo can remain rather than risk deleting existing text; the task reports this explicitly.
 - Cancelled partial corrections no longer advance the reported character progress.
 - Close-tab events remove per-tab session drafts. When a draft cannot be saved on Start, the popup reclaims drafts from tabs that no longer exist and retries once. If saving still fails, typing will not start and the popup keeps the source text visible with recovery instructions.
@@ -69,7 +71,7 @@ The extension attempts to preserve paragraph breaks, including consecutive blank
 - Adjustable timing variation, punctuation pauses, and random breaks.
 - Optional uncorrected typos, corrected typos, and longer breaks at word or sentence boundaries.
 - Support for line breaks, Backspace, and configurable Enter-event handling.
-- Pause, resume, and stop controls; optional keyboard lock, floating controls, and keyboard shortcuts.
+- Pause, resume, and stop controls; optional keyboard lock, Mouse lock (Advanced), floating controls, and keyboard shortcuts.
 - Best-effort typing while another Chrome tab is active.
 
 ## Implementation
