@@ -196,21 +196,22 @@ for (const edition of ["iframe","hybrid"]) {
   test(edition + ": pause releases mouse lock, resume restores it, stop removes listeners", async () => {
     const h=makeHarness({edition});
     await h.start();
-    assert.equal(h.window.count("pointerdown"),1);
+    assert.equal(h.window.count("wheel"),1);
     assert.equal(h.send("AT_PAGE_PAUSE").status.state,"paused");
-    assert.equal(h.window.count("pointerdown"),0);
+    assert.equal(h.window.count("wheel"),0);
     const free=event("click");
     h.document.dispatchEvent(free);
     assert.equal(free.defaultPrevented,false);
     assert.equal(h.send("AT_PAGE_RESUME").status.state,"running");
-    assert.equal(h.window.count("pointerdown"),1);
+    assert.equal(h.window.count("wheel"),1);
     const blocked=event("click");
     h.document.dispatchEvent(blocked);
     assert.equal(blocked.defaultPrevented,true);
     assert.equal(h.send("AT_PAGE_STOP").status.state,"stopped");
-    assert.equal(h.window.count("pointerdown"),0);
-    assert.equal(h.document.count("pointerdown"),0);
+    assert.equal(h.window.count("wheel"),0);
+    assert.equal(h.document.count("wheel"),0);
     await h.finish();
+    assert.equal(h.document.count("pointerdown"),0,"correction guard must also clean up on completion");
   });
 
   test(edition + ": disabled in basic mode and default-off Advanced settings", async () => {
@@ -232,16 +233,16 @@ for (const edition of ["iframe","hybrid"]) {
     await h.start();
     const {oldDoc,newDoc,newWindow}=h.replaceFrame();
     h.pollFrames();
-    assert.equal(oldDoc.count("pointerdown"),1);
-    assert.equal(newDoc.count("pointerdown"),1);
-    assert.equal(newWindow.count("pointerdown"),1);
+    assert.equal(oldDoc.count("wheel"),1);
+    assert.equal(newDoc.count("wheel"),1);
+    assert.equal(newWindow.count("wheel"),1);
     const attemptedClick=event("click");
     newDoc.dispatchEvent(attemptedClick);
     assert.equal(attemptedClick.defaultPrevented,true);
     h.send("AT_PAGE_STOP");
-    assert.equal(oldDoc.count("pointerdown"),0);
-    assert.equal(newDoc.count("pointerdown"),0);
-    assert.equal(newWindow.count("pointerdown"),0);
+    assert.equal(oldDoc.count("wheel"),0);
+    assert.equal(newDoc.count("wheel"),0);
+    assert.equal(newWindow.count("wheel"),0);
     await h.finish();
   });
 
@@ -256,13 +257,13 @@ for (const edition of ["iframe","hybrid"]) {
     assert.equal(onControl.stopped,false);
     h.overlayButtons.get("#toggle").dispatchEvent(event("click"));
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
-    assert.equal(h.document.count("pointerdown"),0,"pause must release Mouse lock");
+    assert.equal(h.document.count("wheel"),0,"pause must release Mouse lock");
     h.overlayButtons.get("#toggle").dispatchEvent(event("click"));
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
-    assert.equal(h.document.count("pointerdown"),1,"resume must restore Mouse lock");
+    assert.equal(h.document.count("wheel"),1,"resume must restore Mouse lock");
     h.overlayButtons.get("#stop").dispatchEvent(event("click"));
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"stopped");
-    assert.equal(h.document.count("pointerdown"),0);
+    assert.equal(h.document.count("wheel"),0);
     await h.finish();
   });
 
