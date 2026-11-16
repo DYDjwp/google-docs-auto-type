@@ -3,6 +3,7 @@ name: Validate Auto Type v1.0.3 development
 on:
   push:
     branches:
+      - main
       - dev/1.0.3
   pull_request:
 

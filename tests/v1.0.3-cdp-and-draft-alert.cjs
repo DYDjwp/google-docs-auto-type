@@ -10,7 +10,7 @@ const flush = async (steps = 24) => {
   for (let i = 0; i < steps; i++) await new Promise(resolve => setImmediate(resolve));
 };
 
-function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBackspace = false, secondTrustedBackspace = false} = {}) {
+function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBackspace = false, secondTrustedBackspace = false, keyboardLock = false} = {}) {
   const handlers = new Map();
   let onMessage;
   let clock = 0;
@@ -20,6 +20,15 @@ function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBac
   const sent = [];
   const backspaces = [];
   let trustedKeydowns = 0;
+  const observedKeys = [];
+  function trustedKey(key,type="keydown") {
+    const e={type,key,isTrusted:true,defaultPrevented:false,stopped:false,
+      preventDefault(){this.defaultPrevented=true;},
+      stopImmediatePropagation(){this.stopped=true;}};
+    document.dispatchEvent(e);
+    observedKeys.push(e);
+    return e;
+  }
   class FakeEvent {
     constructor(type, options = {}) {this.type = type; this.detail = options.detail; this.key = options.key; this.isTrusted = options.isTrusted || false;}
   }
@@ -49,8 +58,11 @@ function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBac
           detail: JSON.stringify(reply)
         })));
       }
-      for (const callback of [...(handlers.get(event.type) || [])]) callback(event);
-      return true;
+      for (const callback of [...(handlers.get(event.type) || [])]) {
+        callback(event);
+        if(event.stopped) break;
+      }
+      return !event.defaultPrevented;
     }
   };
   const insert = char => {
@@ -67,15 +79,16 @@ function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBac
       } else if (message.type === "AT_BG_BACKSPACE") {
         // Chrome's CDP keyDown is trusted, unlike iframe-synthesized DOM Events.
         trustedKeydowns++;
-        document.dispatchEvent({type:"keydown",key:"Backspace",isTrusted:true,preventDefault(){},stopImmediatePropagation(){}});
-        if (secondTrustedBackspace) {
-          document.dispatchEvent({type:"keydown",key:"Backspace",isTrusted:true,preventDefault(){},stopImmediatePropagation(){}});
+        const own=trustedKey("Backspace");
+        if (secondTrustedBackspace) trustedKey("Backspace");
+        if(!own.defaultPrevented) {
+          backspaces.push(buffer.caret);
+          if (buffer.caret > 0) {
+            buffer.text = buffer.text.slice(0,buffer.caret-1) + buffer.text.slice(buffer.caret);
+            buffer.caret--;
+          }
         }
-        backspaces.push(buffer.caret);
-        if (buffer.caret > 0) {
-          buffer.text = buffer.text.slice(0,buffer.caret-1) + buffer.text.slice(buffer.caret);
-          buffer.caret--;
-        }
+        trustedKey("Backspace","keyup");
       } else if (message.type === "AT_BG_WAIT") {
         if (blockNextWait) {
           blockNextWait = false;
@@ -105,9 +118,9 @@ function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBac
   };
   const options = {mode:fallback||uncertainBackspace?"auto":"cdp",advancedMode:true,showOverlay:false,
     startDelay:0,fixTypo:true,fixChance:35,fixPauseMs:400,
-    cpm:1800,jitter:0,rest:false};
+    cpm:1800,jitter:0,rest:false,keyboardLock};
   return {
-    send,options,buffer,sent,backspaces,
+    send,options,buffer,sent,backspaces,observedKeys,
     get trustedKeydowns(){return trustedKeydowns;},
     get blocked(){return !!blockedWait;},
     release(){assert.ok(blockedWait);const fn=blockedWait;blockedWait=null;fn();},
@@ -332,4 +345,15 @@ test("review: status polling cannot unlock Start or Clear draft during pending s
   h.releaseSave();
   await first;
   assert.equal(h.started,1);
+});
+
+test("review: CDP correction passes its own Backspace but blocks the second trusted keydown with Keyboard lock",async()=>{
+  const h=makeCdpHarness({keyboardLock:true,secondTrustedBackspace:true});
+  h.send("AT_PAGE_START",{text:"a",options:h.options});
+  await h.waitForFinish();
+  assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
+  assert.equal(h.buffer.text,"HELLOa");
+  assert.deepEqual(h.observedKeys.map(e=>[e.type,e.defaultPrevented]),[
+    ["keydown",false],["keydown",true],["keyup",false]
+  ]);
 });

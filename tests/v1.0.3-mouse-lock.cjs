@@ -32,11 +32,12 @@ class FakeTarget {
   }
 }
 
-function event(type, {trusted = true, buttons = 0, path = []} = {}) {
+function event(type, {trusted = true, buttons = 0, path = [], key = ""} = {}) {
   return {
     type,
     isTrusted: trusted,
     buttons,
+    key,
     cancelable: true,
     defaultPrevented: false,
     stopped: false,
@@ -48,7 +49,8 @@ function event(type, {trusted = true, buttons = 0, path = []} = {}) {
 
 function makeHarness({
   edition = "iframe", advancedMode = true, mouseLock = true,
-  showOverlay = false, startDelay = 1, failWait = false
+  showOverlay = false, startDelay = 1, failWait = false,
+  keyboardLock = false, fixTypo = false
 } = {}) {
   const window = new FakeTarget();
   const document = new FakeTarget();
@@ -63,6 +65,9 @@ function makeHarness({
   const intervals = new Map();
   const logs = [];
   let overlayHost = null, overlayButtons = null;
+  const edits = [];
+  const rand = Object.create(Math);
+  rand.random = () => 0;
 
   document.querySelector = selector =>
     selector === "iframe.docs-texteventtarget-iframe" ? frame : null;
@@ -88,6 +93,7 @@ function makeHarness({
   document.dispatchEvent = payload => {
     if (payload.type === "__auto_type_main_request_v3__") {
       const request = JSON.parse(payload.detail);
+      if (["type", "backspace", "enter"].includes(request.action)) edits.push(request);
       queueMicrotask(() => document.dispatchEvent({
         type: "__auto_type_main_response_v3__",
         detail: JSON.stringify({id: request.id, ok: true})
@@ -114,7 +120,7 @@ function makeHarness({
     }
   }};
   vm.runInNewContext(read(edition + "/content.js"), {
-    chrome,document,window,
+    chrome,document,window,Math:rand,
     console: {...console, warn: (...a) => logs.push(a), error: (...a) => logs.push(a)},
     performance: {now: () => elapsed},
     setTimeout,clearTimeout,
@@ -129,10 +135,10 @@ function makeHarness({
     onMessage({type, ...data}, {}, value => {response = value;});
     return response;
   };
-  const options = {advancedMode, mouseLock, showOverlay, keyboardLock:false,
-    startDelay, speed:"fast", mode:"iframe", fixTypo:false, jitter:0, rest:false};
+  const options = {advancedMode, mouseLock, showOverlay, keyboardLock,
+    startDelay, speed:"fast", mode:"iframe", fixTypo, fixChance:35, fixPauseMs:400, jitter:0, rest:false};
   return {
-    window, document, innerWindow, innerDoc, send, options, logs,
+    window, document, innerWindow, innerDoc, send, options, logs, edits,
     get overlayHost() {return overlayHost;},
     get overlayButtons() {return overlayButtons;},
     get waiting() {return Boolean(waitResolve);},
@@ -326,3 +332,64 @@ test("review: floating button mousedown preserves editor focus",async()=>{
   h.send("AT_PAGE_STOP");
   await h.finish();
 });
+
+for (const edition of ["iframe", "hybrid"]) {
+  test(edition + ": keyboard lock consumes manual keys before correction safety guard", async () => {
+    const h = makeHarness({edition, keyboardLock:true, fixTypo:true, startDelay:0});
+    await h.start("a");
+    assert.deepEqual(h.edits.map(e=>e.action),["type"]);
+    for (const target of [h.document, h.innerDoc]) {
+      const key = event("keydown",{key:"x"});
+      target.dispatchEvent(key);
+      assert.equal(key.defaultPrevented,true);
+      assert.equal(key.stopped,true);
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
+    }
+    await h.finish();
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
+    assert.equal(h.send("AT_PAGE_STATUS").status.index,1);
+    assert.deepEqual(h.edits.map(e=>e.action),["type","backspace","type"]);
+  });
+
+  test(edition + ": Escape pauses, consumes the key, and does not delete pending typo", async () => {
+    const h = makeHarness({edition, keyboardLock:true, fixTypo:true, startDelay:0});
+    await h.start("a");
+    const esc = event("keydown",{key:"Escape"});
+    h.document.dispatchEvent(esc);
+    assert.equal(esc.defaultPrevented,true);
+    assert.equal(esc.stopped,true);
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+    h.send("AT_PAGE_STOP");
+    await h.finish();
+    assert.deepEqual(h.edits.map(e=>e.action),["type"]);
+  });
+
+  for (const mouseLock of [false,true]) {
+    for (const [button,expected] of [["#close","running"],["#toggle","paused"],["#stop","stopped"]]) {
+      test(edition + ": correction panel " + button + " obeys its own handler (mouseLock=" + mouseLock + ")", async () => {
+        const h=makeHarness({edition,mouseLock,showOverlay:true,fixTypo:true,startDelay:0});
+        await h.start("a");
+        const host=h.overlayHost;
+        for(const type of ["pointerdown","mousedown"]) {
+          const e=event(type,{path:[host,h.document,h.window]});
+          h.window.dispatchEvent(e);
+          h.document.dispatchEvent(e);
+          assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
+          assert.equal(e.stopped,false);
+        }
+        h.overlayButtons.get(button).dispatchEvent(event("click"));
+        assert.equal(h.send("AT_PAGE_STATUS").status.state,expected);
+        if(button==="#close"){
+          assert.equal(host.isConnected,false);
+          await h.finish();
+          assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
+          assert.deepEqual(h.edits.map(e=>e.action),["type","backspace","type"]);
+        } else {
+          if(expected==="paused")h.send("AT_PAGE_STOP");
+          await h.finish();
+          assert.deepEqual(h.edits.map(e=>e.action),["type"]);
+        }
+      });
+    }
+  }
+}

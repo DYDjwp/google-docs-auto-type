@@ -313,6 +313,28 @@
     overlay.stop.style.opacity = overlay.stop.disabled ? ".45" : "1";
   }
 
+  function isOverlayEvent(event) {
+    const host = overlay?.host;
+    return Boolean(host?.isConnected && (
+      event.composedPath?.().includes(host) || event.target === host ||
+      (event.target?.nodeType && host.contains?.(event.target))
+    ));
+  }
+
+  // CDP key events are trusted. Permit the current command's own key events
+  // rather than exempting every real key during the entire CDP round trip.
+  function isExpectedCdpKey(task, event) {
+    if (task.mode !== "CDP" || !task.cdpKeyInFlight) return false;
+    const key = event.key || (event.keyCode === 8 ? "Backspace" :
+      event.keyCode === 13 ? "Enter" : "");
+    if (task.cdpKeyKind !== key) return false;
+    if (key === "Backspace") {
+      return event.type === "keyup" ||
+        (event.type === "keydown" && task.cdpBackspaceExpected);
+    }
+    return key === "Enter";
+  }
+
   // Keyboard lock is local to the Docs tab. Our synthetic iframe events
   // remain untrusted, so this listener does not block the extension itself.
   function enableKeyboardLock(task) {
@@ -320,10 +342,12 @@
     disableKeyboardLock();
     const watched = new Set();
     const onKey = event => {
-      if (job !== task || task.state !== "running" || !event.isTrusted || task.cdpKeyInFlight) return;
-      if (event.type === "keydown" && event.key === "Escape") pause();
+      if (job !== task || task.state !== "running" || !event.isTrusted ||
+          isExpectedCdpKey(task, event)) return;
+      // Consume the event before pause changes the task state.
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (event.type === "keydown" && event.key === "Escape") pause();
     };
     const watch = node => {
       if (!node || watched.has(node)) return;
@@ -376,11 +400,7 @@
           !event.buttons) return;
 
       // The floating Pause / Stop controls must remain usable.
-      const host = overlay?.host;
-      if (host?.isConnected && (
-        event.composedPath?.().includes(host) || event.target === host ||
-        host.contains?.(event.target)
-      )) return;
+      if (isOverlayEvent(event)) return;
 
       if (event.cancelable) event.preventDefault();
       event.stopImmediatePropagation();
@@ -449,14 +469,16 @@
     const types = ["pointerdown", "mousedown", "keydown"];
     const onUserAction = event => {
       if (job !== task || !task.correctionPending || !event.isTrusted) return;
+      // The panel's own click handlers decide whether to pause, stop or hide.
+      // A mouse press on its controls must not preempt those handlers.
+      if (isOverlayEvent(event)) return;
       // CDP Input.dispatchKeyEvent creates trusted DOM events. During our
       // own Backspace command, ignore only its expected keydown. Other real
       // keys, mouse buttons and pointer events must still stop correction.
       // Chrome does not provide a definitive origin bit for CDP events:
       // this narrow in-flight exception minimizes accidental suppression.
-      if (task.mode === "CDP" && task.cdpBackspaceExpected &&
-          event.type === "keydown" &&
-          (event.key === "Backspace" || event.keyCode === 8)) {
+      if (task.cdpBackspaceExpected && isExpectedCdpKey(task, event) &&
+          event.type === "keydown") {
         task.cdpBackspaceExpected = false;
         return;
       }
@@ -502,8 +524,12 @@
     const info = frameTarget();
     if (info) focusFrame(info);
     task.cdpKeyInFlight = true;
+    task.cdpKeyKind = character === "\n" ? "Enter" : null;
     try { await sendToBackground("AT_BG_INSERT", {char: character}); }
-    finally { task.cdpKeyInFlight = false; }
+    finally {
+      task.cdpKeyKind = null;
+      task.cdpKeyInFlight = false;
+    }
   }
 
   async function sendBackspace(task) {
@@ -517,10 +543,12 @@
     const info = frameTarget();
     if (info) focusFrame(info);
     task.cdpKeyInFlight = true;
+    task.cdpKeyKind = "Backspace";
     task.cdpBackspaceExpected = true;
     try { await sendToBackground("AT_BG_BACKSPACE"); }
     finally {
       task.cdpBackspaceExpected = false;
+      task.cdpKeyKind = null;
       task.cdpKeyInFlight = false;
     }
   }
@@ -579,11 +607,11 @@
       task.phase = "typing";
       if (task.options.showOverlay) ensureOverlay();
       else if (overlay?.host?.isConnected) overlay.host.remove();
-      // Install mouse blocking before the correction guard, so blocked
-      // clicks don't themselves interrupt a pending Fix typo cycle.
+      // Locks must intercept input before the correction guard. A blocked
+      // interaction cannot move the caret and must not stop a correction.
       enableMouseLock(task);
-      disableCorrectionGuard = guardCorrectionPosition(task);
       enableKeyboardLock(task);
+      disableCorrectionGuard = guardCorrectionPosition(task);
       updateOverlay();
       await pauseAwareWait(task, task.options.startDelay * 1000);
       task.nextRestAt = randomInt(
@@ -718,7 +746,7 @@
     job = {
       chars: Array.from(text), index: 0, state: "running", stopped: false,
       paused: false, options, mode: "", error: "", sinceRest: 0,
-      nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, finalized: false,
+      nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
       correctionPending: false, correctionUnsafe: false, cdpBackspaceExpected: false
     };
     if (job.options.showOverlay) ensureOverlay();
