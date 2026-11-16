@@ -1,0 +1,23 @@
+name: Remove superseded v1.0.2-beta release
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/delete-old-1.0.2-beta.yml"]
+permissions:
+  contents: write
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify and delete only the superseded beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.0.2-beta" --jq '.id')" = "435551720"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.0.2-beta" --jq '.prerelease')" = "true"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v1.0.2-beta" --jq '.object.sha')" = "611cdaf9cf62d47b840e6ab0a858ebe7d32849e6"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')" = "v1.0.2"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.0.3-beta" --jq '.id')" = "447717436"
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/435551720"
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/v1.0.2-beta"
