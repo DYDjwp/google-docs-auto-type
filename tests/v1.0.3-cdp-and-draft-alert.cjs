@@ -10,7 +10,7 @@ const flush = async (steps = 24) => {
   for (let i = 0; i < steps; i++) await new Promise(resolve => setImmediate(resolve));
 };
 
-function makeCdpHarness({fallback = false, blockCorrection = false} = {}) {
+function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBackspace = false, secondTrustedBackspace = false} = {}) {
   const handlers = new Map();
   let onMessage;
   let clock = 0;
@@ -34,9 +34,17 @@ function makeCdpHarness({fallback = false, blockCorrection = false} = {}) {
     dispatchEvent(event) {
       if (event.type === "__auto_type_main_request_v3__") {
         const req = JSON.parse(event.detail);
-        const reply = req.action === "type" && fallback
-          ? {id: req.id, ok: false, error: "Google Docs input target is unavailable"}
-          : {id: req.id, ok: true};
+        if (uncertainBackspace && req.action === "type") insert(req.char);
+        if (uncertainBackspace && req.action === "backspace") {
+          backspaces.push(buffer.caret);
+          buffer.text = buffer.text.slice(0,buffer.caret-1) + buffer.text.slice(buffer.caret);
+          buffer.caret--;
+        }
+        const reply = uncertainBackspace && req.action === "backspace"
+          ? {id: req.id, ok: false, error: "Unknown result after dispatch"}
+          : req.action === "type" && fallback
+            ? {id: req.id, ok: false, error: "Google Docs input target is unavailable"}
+            : {id: req.id, ok: true};
         queueMicrotask(() => document.dispatchEvent(new FakeEvent("__auto_type_main_response_v3__", {
           detail: JSON.stringify(reply)
         })));
@@ -60,6 +68,9 @@ function makeCdpHarness({fallback = false, blockCorrection = false} = {}) {
         // Chrome's CDP keyDown is trusted, unlike iframe-synthesized DOM Events.
         trustedKeydowns++;
         document.dispatchEvent({type:"keydown",key:"Backspace",isTrusted:true,preventDefault(){},stopImmediatePropagation(){}});
+        if (secondTrustedBackspace) {
+          document.dispatchEvent({type:"keydown",key:"Backspace",isTrusted:true,preventDefault(){},stopImmediatePropagation(){}});
+        }
         backspaces.push(buffer.caret);
         if (buffer.caret > 0) {
           buffer.text = buffer.text.slice(0,buffer.caret-1) + buffer.text.slice(buffer.caret);
@@ -92,7 +103,7 @@ function makeCdpHarness({fallback = false, blockCorrection = false} = {}) {
     onMessage({type,...data},{},value=>{result=value;});
     return result;
   };
-  const options = {mode:fallback?"auto":"cdp",advancedMode:true,showOverlay:false,
+  const options = {mode:fallback||uncertainBackspace?"auto":"cdp",advancedMode:true,showOverlay:false,
     startDelay:0,fixTypo:true,fixChance:35,fixPauseMs:400,
     cpm:1800,jitter:0,rest:false};
   return {
@@ -161,7 +172,7 @@ test("P1: a human Backspace without an in-flight CDP command is not exempt",asyn
   assert.deepEqual(h.backspaces,[]);
 });
 
-function makePopupHarness() {
+function makePopupHarness({holdSave=false} = {}) {
   class Element {
     constructor(){
       this.textContent="";this.value="";this.hidden=false;this.disabled=false;
@@ -179,6 +190,8 @@ function makePopupHarness() {
   };
   get("draftError").hidden=true;
   let canSave=false;
+  let releaseSave;
+  const gate = holdSave ? new Promise(resolve=>{releaseSave=resolve;}) : Promise.resolve();
   let started=0,closed=false;
   const intervals=[];
   const storage = new Map([["autoTypeDraft:17","Saved"],["autoTypeDraft:99","Old"]]);
@@ -198,6 +211,7 @@ function makePopupHarness() {
       session:{
         get:async key=>key===null?Object.fromEntries(storage):{[key]:storage.get(key)},
         set:async values=>{
+          await gate;
           if(!canSave)throw new Error("QUOTA_BYTES quota exceeded");
           for(const [key,value] of Object.entries(values)) storage.set(key,value);
         },
@@ -219,6 +233,7 @@ function makePopupHarness() {
   },{filename:"iframe/popup.js"});
   return {
     get,storage,
+    releaseSave(){releaseSave?.();},
     setCanSave(v){canSave=v;},
     get started(){return started;},
     get closed(){return closed;},
@@ -278,4 +293,43 @@ test("both extension editions share the same CDP guard and popup alert",()=>{
   for(const name of ["content.js","popup.js","popup.html","popup.css"]){
     assert.equal(read("iframe/"+name),read("hybrid/"+name),name);
   }
+});
+
+test("review: ambiguous iframe Backspace is never repeated via CDP",async()=>{
+  const h=makeCdpHarness({uncertainBackspace:true});
+  h.send("AT_PAGE_START",{text:"a",options:h.options});
+  await h.waitForFinish();
+  const status=h.send("AT_PAGE_STATUS").status;
+  assert.equal(status.state,"error");
+  assert.equal(status.index,0);
+  assert.equal(h.buffer.text,"HELLO");
+  assert.deepEqual(h.backspaces,[6]);
+  assert.equal(h.trustedKeydowns,0);
+});
+
+test("review: second trusted Backspace is not exempt during CDP correction",async()=>{
+  const h=makeCdpHarness({secondTrustedBackspace:true});
+  h.send("AT_PAGE_START",{text:"a",options:h.options});
+  await h.waitForFinish();
+  assert.equal(h.send("AT_PAGE_STATUS").status.state,"stopped");
+  assert.equal(h.send("AT_PAGE_STATUS").status.index,0);
+  assert.deepEqual(h.sent,["s"]);
+});
+
+test("review: status polling cannot unlock Start or Clear draft during pending save",async()=>{
+  const h=makePopupHarness({holdSave:true});
+  await h.ready();
+  h.setCanSave(true);
+  const first=h.start("Keep source");
+  await flush();
+  await h.poll();
+  assert.equal(h.get("start").disabled,true);
+  assert.equal(h.get("clearDraft").disabled,true);
+  assert.equal(h.get("text").disabled,true);
+  await h.get("start").fire("click");
+  await h.get("clearDraft").fire("click");
+  assert.equal(h.get("text").value,"Keep source");
+  h.releaseSave();
+  await first;
+  assert.equal(h.started,1);
 });

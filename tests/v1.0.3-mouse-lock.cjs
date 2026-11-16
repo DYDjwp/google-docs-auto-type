@@ -305,3 +305,24 @@ test("Mouse lock doesn't require new browser permissions",()=>{
   assert.equal(read("iframe/content.js"),read("hybrid/content.js"));
   assert.equal(read("iframe/popup.html"),read("hybrid/popup.html"));
 });
+
+test("review: pause during initial iframe probe does not install mouse lock",async()=>{
+  const h=makeHarness();
+  assert.equal(h.send("AT_PAGE_START",{text:"abc",options:h.options}).ok,true);
+  assert.equal(h.send("AT_PAGE_PAUSE").status.state,"paused");
+  await flush();
+  assert.equal(h.window.count("wheel"),0);
+  assert.equal(h.document.count("wheel"),0);
+  h.send("AT_PAGE_STOP");
+  await h.finish();
+});
+
+test("review: floating button mousedown preserves editor focus",async()=>{
+  const h=makeHarness({showOverlay:true});
+  await h.start();
+  const down=event("mousedown");
+  h.overlayButtons.get("#toggle").dispatchEvent(down);
+  assert.equal(down.defaultPrevented,true);
+  h.send("AT_PAGE_STOP");
+  await h.finish();
+});
