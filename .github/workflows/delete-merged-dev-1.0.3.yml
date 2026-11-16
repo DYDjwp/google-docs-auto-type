@@ -1,0 +1,23 @@
+name: Clean up merged 1.0.3 development branch
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/delete-merged-dev-1.0.3.yml"]
+permissions:
+  contents: write
+jobs:
+  delete-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify and delete merged development branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BRANCH="dev/1.0.3"
+          EXPECTED="44f97a5ac45a9a0a89b67e405c9fc64fc6555678"
+          CURRENT="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq .object.sha)"
+          test "$CURRENT" = "$EXPECTED"
+          BASE="$(gh api "repos/$GITHUB_REPOSITORY/compare/$EXPECTED...main" --jq .merge_base_commit.sha)"
+          test "$BASE" = "$EXPECTED"
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH"
