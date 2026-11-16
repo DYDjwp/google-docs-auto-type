@@ -21,7 +21,7 @@ jobs:
         run: |
           set -euo pipefail
           for edition in iframe hybrid; do
-            node -e "const m=require('./${edition}/manifest.json');if(m.version !== '1.0.3' || m.version_name !== '1.0.3-dev')process.exit(1)"
+            node -e "const m=require('./${edition}/manifest.json');if(m.version !== '1.0.3' || m.version_name !== '1.0.3-beta')process.exit(1)"
             for script in background.js content.js main-bridge.js popup.js; do
               node --check "$edition/$script"
             done

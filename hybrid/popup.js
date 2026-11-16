@@ -33,6 +33,7 @@ let draftSaveTail = Promise.resolve();
 let draftDirty = false;
 let draftLoaded = false;
 let clearingDraft = false;
+let starting = false;
 let popupClosing = false;
 function draftKey() { return activeTabId ? `autoTypeDraft:${activeTabId}` : null; }
 function saveDraft(value) {
@@ -166,7 +167,7 @@ function renderStatus(status) {
   $("percentage").textContent = `${percentage}%`;
   $("pause").disabled = !["paused", "running"].includes(state);
   $("stop").disabled = !["paused", "running"].includes(state);
-  $("start").disabled = ["paused", "running"].includes(state);
+  $("start").disabled = starting || clearingDraft || ["paused", "running"].includes(state);
   $("pause").textContent = state === "paused" ? "Resume" : "Pause";
   const messages = {
     idle: "Ready · Text will be typed into the current Google Doc",
@@ -253,7 +254,7 @@ $("text").addEventListener("input", () => {
   }
 });
 $("clearDraft").addEventListener("click", async () => {
-  if (!activeTabId || !draftLoaded || clearingDraft) return;
+  if (!activeTabId || !draftLoaded || clearingDraft || starting) return;
   clearingDraft = true;
   clearTimeout(draftSaveTimer);
   $("clearDraft").disabled = true;
@@ -323,8 +324,12 @@ $("start").addEventListener("click", async () => {
   const text = $("text").value;
   if (!text.trim()) { setMessage("Paste some text first", "error"); return; }
   if (text.length > 200000) { setMessage("Maximum 200,000 characters per session", "error"); return; }
-  if (!activeTabId || clearingDraft) return;
+  if (!activeTabId || clearingDraft || starting || ["paused", "running"].includes(currentState)) return;
+  starting = true;
+  const startOptions = {...options};
   $("start").disabled = true;
+  $("clearDraft").disabled = true;
+  $("text").disabled = true;
   try {
     // Always finish saving the source text before this popup can close.
     clearTimeout(draftSaveTimer);
@@ -332,14 +337,14 @@ $("start").addEventListener("click", async () => {
     // Install the MAIN-world bridge from the popup, independently of the
     // background service worker. This prevents a missing runtime.onMessage
     // receiver from aborting an otherwise healthy iframe typing session.
-    if (!HAS_CDP || options.mode !== "cdp") {
+    if (!HAS_CDP || startOptions.mode !== "cdp") {
       await chrome.scripting.executeScript({
         target: {tabId: activeTabId},
         files: ["main-bridge.js"],
         world: "MAIN"
       });
     }
-    const answer = await pageMessage("AT_PAGE_START", {text, options});
+    const answer = await pageMessage("AT_PAGE_START", {text, options: startOptions});
     if (!answer?.ok) throw new Error(answer?.error || "Could not start");
     renderStatus(answer.status);
     window.close();
@@ -350,7 +355,11 @@ $("start").addEventListener("click", async () => {
     } else {
       setMessage(e.message, "error");
     }
-    $("start").disabled = false;
+  } finally {
+    starting = false;
+    $("text").disabled = false;
+    $("clearDraft").disabled = !draftLoaded || clearingDraft;
+    $("start").disabled = clearingDraft || ["paused", "running"].includes(currentState);
   }
 });
 $("pause").addEventListener("click", async () => {

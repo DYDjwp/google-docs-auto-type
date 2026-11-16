@@ -293,11 +293,11 @@ test("Advanced popup exposes an off-by-default Mouse lock setting",()=>{
     assert.ok(html.indexOf('id="mouseLock"')>html.indexOf('id="advancedPanel"'));
     assert.match(script, /mouseLock: false/);
     assert.match(script, /const TOGGLES = \[[^\]]*"mouseLock"/);
-    assert.equal(JSON.parse(read(edition+"/manifest.json")).version_name,"1.0.3-dev");
+    assert.equal(JSON.parse(read(edition+"/manifest.json")).version_name,"1.0.3-beta");
   }
 });
 
-test("Mouse lock doesn't require new browser permissions or alter the stable main branch",()=>{
+test("Mouse lock doesn't require new browser permissions",()=>{
   const iframe=JSON.parse(read("iframe/manifest.json"));
   const hybrid=JSON.parse(read("hybrid/manifest.json"));
   assert.deepEqual(iframe.permissions,["storage","scripting"]);

@@ -277,6 +277,10 @@
       toggle: root.querySelector("#toggle"),
       stop: root.querySelector("#stop")
     };
+    // Mouse-operated controls must not steal the document's text focus.
+    for (const button of [overlay.toggle, overlay.stop, root.querySelector("#close")]) {
+      button.addEventListener("mousedown", event => event.preventDefault());
+    }
     overlay.toggle.addEventListener("click", () => {
       if (!job) return;
       if (job.state === "paused") resume();
@@ -362,10 +366,11 @@
   ];
 
   function enableMouseLock(task) {
-    if (!task.options.mouseLock || mouseLockController) return;
+    if (!task.options.mouseLock || task.state !== "running" || mouseLockController) return;
     const watched = new Set();
+    let enabled = true;
     const onMouse = event => {
-      if (job !== task || task.state !== "running" || !event.isTrusted) return;
+      if (!enabled || job !== task || task.state !== "running" || !event.isTrusted) return;
       // Movement with no button held cannot change the editor selection.
       if ((event.type === "pointermove" || event.type === "mousemove") &&
           !event.buttons) return;
@@ -382,24 +387,15 @@
     };
     const watch = node => {
       if (!node?.addEventListener || watched.has(node)) return;
+      watched.add(node);
       for (const type of MOUSE_LOCK_EVENTS) {
         node.addEventListener(type, onMouse, {capture: true, passive: false});
       }
-      watched.add(node);
     };
-    watch(window);
-    watch(document);
-    const poll = () => {
-      try {
-        const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
-        watch(frame?.contentWindow);
-        watch(frame?.contentDocument);
-      } catch { /* Google Docs may replace or isolate its input iframe. */ }
-    };
-    poll();
-    const interval = setInterval(poll, 1000);
+    let interval;
     mouseLockController = () => {
-      clearInterval(interval);
+      enabled = false; // Retired listeners cannot block input after resume.
+      if (interval !== undefined) clearInterval(interval);
       for (const node of watched) {
         for (const type of MOUSE_LOCK_EVENTS) {
           try { node.removeEventListener(type, onMouse, true); }
@@ -407,6 +403,22 @@
         }
       }
     };
+    const poll = () => {
+      try {
+        const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
+        watch(frame?.contentWindow);
+        watch(frame?.contentDocument);
+      } catch { /* Google Docs may replace or isolate its input iframe. */ }
+    };
+    try {
+      watch(window);
+      watch(document);
+      poll();
+      interval = setInterval(poll, 1000);
+    } catch (error) {
+      disableMouseLock();
+      throw error;
+    }
   }
 
   function disableMouseLock() {
@@ -442,9 +454,12 @@
       // keys, mouse buttons and pointer events must still stop correction.
       // Chrome does not provide a definitive origin bit for CDP events:
       // this narrow in-flight exception minimizes accidental suppression.
-      if (task.mode === "CDP" && task.cdpKeyInFlight &&
+      if (task.mode === "CDP" && task.cdpBackspaceExpected &&
           event.type === "keydown" &&
-          (event.key === "Backspace" || event.keyCode === 8)) return;
+          (event.key === "Backspace" || event.keyCode === 8)) {
+        task.cdpBackspaceExpected = false;
+        return;
+      }
       task.correctionUnsafe = true;
       if (task.state === "running" || task.state === "paused") stop();
     };
@@ -477,8 +492,10 @@
     if (task.mode === "iframe") {
       try { await insertViaIframe(character, task.options.enterStrategy); return; }
       catch (e) {
-        if (task.options.mode === "iframe") throw e;
-        if (!HAS_CDP) throw e;
+        // A missing acknowledgement may mean the character was already
+        // dispatched. Only switch transports on explicit pre-dispatch errors.
+        if (task.options.mode === "iframe" || !HAS_CDP ||
+            !/Google Docs input (?:iframe|target) is unavailable/.test(e?.message || "")) throw e;
         task.mode = "CDP";
       }
     }
@@ -492,17 +509,20 @@
   async function sendBackspace(task) {
     // In iframe mode, corrections use exactly the verified Backspace sequence.
     if (task.mode === "iframe") {
-      try { await bridgeRequest("backspace"); return; }
-      catch (error) {
-        if (!HAS_CDP || task.options.mode === "iframe") throw error;
-        task.mode = "CDP";
-      }
+      // Never repeat a destructive edit via another transport when the
+      // first Backspace may already have been dispatched.
+      await bridgeRequest("backspace");
+      return;
     }
     const info = frameTarget();
     if (info) focusFrame(info);
     task.cdpKeyInFlight = true;
+    task.cdpBackspaceExpected = true;
     try { await sendToBackground("AT_BG_BACKSPACE"); }
-    finally { task.cdpKeyInFlight = false; }
+    finally {
+      task.cdpBackspaceExpected = false;
+      task.cdpKeyInFlight = false;
+    }
   }
   function pause() {
     if (!job || job.state !== "running") return;
@@ -518,7 +538,12 @@
     if (!job || job.state !== "paused") return;
     job.paused = false;
     job.state = "running";
-    enableMouseLock(job);
+    try { enableMouseLock(job); }
+    catch (error) {
+      job.error = "Mouse lock could not be restored: " + (error?.message || String(error));
+      stop();
+      return;
+    }
     updateOverlay();
     notifyBadge(job, true);
   }
@@ -694,7 +719,7 @@
       chars: Array.from(text), index: 0, state: "running", stopped: false,
       paused: false, options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, finalized: false,
-      correctionPending: false, correctionUnsafe: false
+      correctionPending: false, correctionUnsafe: false, cdpBackspaceExpected: false
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

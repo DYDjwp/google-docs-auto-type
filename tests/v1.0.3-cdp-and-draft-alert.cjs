@@ -35,7 +35,7 @@ function makeCdpHarness({fallback = false, blockCorrection = false} = {}) {
       if (event.type === "__auto_type_main_request_v3__") {
         const req = JSON.parse(event.detail);
         const reply = req.action === "type" && fallback
-          ? {id: req.id, ok: false, error: "iframe input failed"}
+          ? {id: req.id, ok: false, error: "Google Docs input target is unavailable"}
           : {id: req.id, ok: true};
         queueMicrotask(() => document.dispatchEvent(new FakeEvent("__auto_type_main_response_v3__", {
           detail: JSON.stringify(reply)
