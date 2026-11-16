@@ -1,0 +1,65 @@
+name: Publish Auto Type v1.0.3-beta
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/publish-v1.0.3-beta.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 44f97a5ac45a9a0a89b67e405c9fc64fc6555678
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify reviewed code and run regressions
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            node -e "const m=require('./${edition}/manifest.json');if(m.version!=='1.0.3'||m.version_name!=='1.0.3-beta')process.exit(1)"
+            for script in background.js content.js main-bridge.js popup.js; do
+              node --check "$edition/$script"
+            done
+          done
+          node --test tests/*.cjs
+      - name: Build and validate both beta archives
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            (cd "$edition" && zip -q -r "$GITHUB_WORKSPACE/auto-type-1.0.3-beta-${edition}.zip" LICENSE README.md background.js content.js main-bridge.js manifest.json popup.css popup.html popup.js icons/)
+            unzip -t "auto-type-1.0.3-beta-${edition}.zip"
+            test "$(unzip -p "auto-type-1.0.3-beta-${edition}.zip" manifest.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version_name")" = "1.0.3-beta"
+          done
+      - name: Publish separate beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          ## What's new in v1.0.3-beta
+
+          - **Mouse lock:** A new optional setting under Advanced mode → During typing. Blocks accidental mouse clicks, dragging, selection and scrolling in the Google Docs tab while typing. Off by default; the cursor remains movable. Pause, Stop, completion and errors release the guard. Floating controls and browser shortcuts remain available.
+          - **Safer typo correction:** Interrupted corrections avoid issuing Backspace at a potentially changed insertion point. An incomplete correction does not increase progress. Hybrid no longer retries an uncertain Backspace through another transport, and its CDP correction guard recognizes its expected Backspace event.
+          - **Draft storage recovery:** Closed tabs' drafts are removed. If saving fails, the popup cleans orphaned drafts and retries; persistent failures retain the text and display a separate multiline recovery notice that is not overwritten by status polling.
+          - **Lifecycle and UI reliability:** Prevent stale Mouse lock listeners from blocking input after cleanup, avoid stealing editor focus with floating controls, and prevent duplicate Start actions during draft saving and initialization.
+          - **Preserved controls:** Pause/resume with Alt/Option + Shift + P, cancel with Alt/Option + Shift + X, one-click Clear draft and automatic Service Worker pacing recovery.
+
+          ## Downloads
+
+          - `auto-type-1.0.3-beta-iframe.zip` — recommended; no debugger permission required.
+          - `auto-type-1.0.3-beta-hybrid.zip` — includes CDP input; requires debugger permission.
+
+          Extract one archive, load its directory at `chrome://extensions` in Developer mode, and refresh any open Google Docs tabs after installing. Customize keyboard shortcuts at `chrome://extensions/shortcuts`.
+
+          ## Known issue
+
+          Google Docs uses an undocumented input interface. Synthetic input may be ignored without reporting an error, and Mouse lock provides best-effort DOM event protection rather than guaranteed caret or system pointer locking. Interrupted corrections may leave a temporary typo; verify document contents, especially when using Fix typo. Browser-based integration testing is still needed.
+          NOTES
+          gh release create v1.0.3-beta auto-type-1.0.3-beta-iframe.zip auto-type-1.0.3-beta-hybrid.zip --target "44f97a5ac45a9a0a89b67e405c9fc64fc6555678" --title "Auto Type v1.0.3-beta" --notes-file "$RUNNER_TEMP/notes.md" --prerelease --latest=false
