@@ -1,0 +1,89 @@
+name: Publish Auto Type v1.0.3 stable
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/publish-v1.0.3-stable.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d3d49910622882959ddbdbd4755d40f763b30130
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify reviewed stable source and run regressions
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            node -e "const m=require('./${edition}/manifest.json');if(m.version!=='1.0.3'||m.version_name!=='1.0.3')process.exit(1)"
+            for script in background.js content.js main-bridge.js popup.js; do
+              node --check "$edition/$script"
+            done
+          done
+          node --test tests/*.cjs
+          node -e "const a=require('./iframe/manifest.json'),b=require('./hybrid/manifest.json');if(JSON.stringify(a.permissions)!==JSON.stringify(['storage','scripting'])||JSON.stringify(b.permissions)!==JSON.stringify(['storage','scripting','debugger']))process.exit(1)"
+      - name: Build and validate both stable archives
+        run: |
+          set -euo pipefail
+          for edition in iframe hybrid; do
+            (cd "$edition" && zip -q -r "$GITHUB_WORKSPACE/auto-type-1.0.3-${edition}.zip" LICENSE README.md background.js content.js main-bridge.js manifest.json popup.css popup.html popup.js icons/)
+            unzip -t "auto-type-1.0.3-${edition}.zip"
+            test "$(unzip -p "auto-type-1.0.3-${edition}.zip" manifest.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version_name")" = "1.0.3"
+            unzip -p "auto-type-1.0.3-${edition}.zip" popup.js | cmp - "$edition/popup.js"
+          done
+      - name: Publish reviewed stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          ## What's new in v1.0.3
+
+          - **Version display:** The popup shows the installed version automatically from the Chrome extension manifest, including version names for future pre-releases.
+          - **Mouse lock:** Optional, off by default, under Advanced mode → During typing. Blocks accidental clicks, dragging, selection and scrolling in the Google Docs tab while the task runs. The pointer remains movable; mouse protection is released on pause, stop, completion or failure.
+          - **Safer typo correction:** Cancelling, pausing or changing the editor frame during an incomplete correction prevents a potentially misplaced Backspace. Incomplete corrections do not inflate progress, and uncertain Backspace operations are never retried through a second transport.
+          - **Keyboard lock and CDP:** Keyboard protection runs before correction safety checks. Ordinary manual input is blocked without interrupting correction; Escape pauses, and the expected CDP keyboard events remain usable. Listener cleanup is more resilient.
+          - **Floating controls:** Hide, Pause and Stop work through their own handlers during correction, without unnecessarily stealing editor focus.
+          - **Draft recovery:** Closed-tab drafts are cleaned up; a failed draft save triggers orphan cleanup and a retry. Persistent failures keep the input visible with a dismissible, multiline recovery message.
+          - **UI reliability:** A pending Start cannot be submitted twice, and outdated status-poll responses cannot override a newer pause or stop action.
+          - **Regression checks:** Main-branch pushes now trigger CI. Existing keyboard shortcuts, one-click Clear draft, and Service Worker timing recovery are retained.
+
+          ## Downloads
+
+          - `auto-type-1.0.3-iframe.zip` — recommended; no debugger permission required.
+          - `auto-type-1.0.3-hybrid.zip` — includes CDP input; requires debugger permission.
+
+          Extract one archive, load its folder using Developer mode at `chrome://extensions`, and refresh any already-open Google Docs tabs. Keyboard shortcuts can be customized at `chrome://extensions/shortcuts`.
+
+          ## Known limitation
+
+          Google Docs uses an undocumented input interface. A successful dispatch does not prove the document accepted the edit. Mouse lock is best-effort page event interception, not system pointer capture or a guarantee of caret identity. Interrupted corrections may leave a temporary typo. Always verify the resulting document. Automated regression tests pass; these are not a substitute for live Google Docs integration testing.
+          NOTES
+          gh release create v1.0.3 auto-type-1.0.3-iframe.zip auto-type-1.0.3-hybrid.zip --target "d3d49910622882959ddbdbd4755d40f763b30130" --title "Auto Type v1.0.3" --notes-file "$RUNNER_TEMP/notes.md" --latest
+      - name: Verify published stable archives before deleting beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)" = "v1.0.3"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v1.0.3" --jq .object.sha)" = "d3d49910622882959ddbdbd4755d40f763b30130"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.0.3" --jq '.prerelease')" = "false"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.0.3" --jq '.draft')" = "false"
+          mkdir -p "$RUNNER_TEMP/verify"
+          gh release download v1.0.3 --pattern 'auto-type-1.0.3-*.zip' --dir "$RUNNER_TEMP/verify"
+          for edition in iframe hybrid; do
+            cmp "auto-type-1.0.3-${edition}.zip" "$RUNNER_TEMP/verify/auto-type-1.0.3-${edition}.zip"
+          done
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.0.3-beta" --jq .id)" = "447717436"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.0.3-beta" --jq .prerelease)" = "true"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v1.0.3-beta" --jq .object.sha)" = "44f97a5ac45a9a0a89b67e405c9fc64fc6555678"
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/447717436"
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/v1.0.3-beta"
