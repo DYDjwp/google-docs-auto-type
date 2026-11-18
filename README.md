@@ -6,6 +6,8 @@ The project is distributed in two editions. Both use the same interface and typi
 
 **Current stable version: v1.0.3.** Download from [GitHub Releases](../../releases/latest).
 
+**Development (v1.0.4):** Both editions register an optional uninstall feedback page. Feedback is submitted only when the user chooses Send feedback; the extension does not send document text or an identifier to it.
+
 ## Editions
 
 | | iframe | Hybrid |
@@ -92,7 +94,7 @@ Google Docs' iframe input behavior is **undocumented and unsupported by Google**
 
 ## Privacy and permissions
 
-The extension operates on Google Docs pages and stores user preferences using `chrome.storage.local`. Entered text drafts are stored in `chrome.storage.session` per tab and cleared when the browser session ends. Text is not sent by the extension to a separate server. The project does not include analytics or external runtime libraries.
+The extension operates on Google Docs pages and stores user preferences using `chrome.storage.local`. Entered text drafts are stored in `chrome.storage.session` per tab and cleared when the browser session ends. Text is not sent by the extension to a separate server. The project does not include analytics or external runtime libraries. When uninstalled, Chrome opens the optional [feedback page](https://dydjwp.github.io/google-docs-auto-type/uninstall). Only feedback voluntarily submitted on that page is sent to a private Google Sheet.
 
 The Hybrid edition requires the sensitive `debugger` permission. Review the source and Chrome's permission prompt before installing it.
 

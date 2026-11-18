@@ -291,6 +291,7 @@ test("P2: closing a tab removes its session draft in both editions", async () =>
     const chrome = {
       runtime: {
         getManifest:() => ({permissions: edition==="hybrid" ? ["debugger"] : []}),
+        onInstalled:{addListener(){}},
         onMessage:{addListener(){}}
       },
       tabs: {
@@ -308,13 +309,13 @@ test("P2: closing a tab removes its session draft in both editions", async () =>
   }
 });
 
-test("v1.0.3 stable metadata and edition parity", () => {
+test("v1.0.4 dev metadata and edition parity", () => {
   for (const name of ["popup.js","content.js","background.js"]) {
     assert.equal(read("iframe/"+name),read("hybrid/"+name));
   }
   for (const edition of ["iframe","hybrid"]) {
     const manifest = JSON.parse(read(edition+"/manifest.json"));
-    assert.equal(manifest.version,"1.0.3");
-    assert.equal(manifest.version_name,"1.0.3");
+    assert.equal(manifest.version,"1.0.4");
+    assert.equal(manifest.version_name,"1.0.4-dev");
   }
 });

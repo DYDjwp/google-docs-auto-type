@@ -7,6 +7,15 @@
  * user deliberately selects it.
  */
 const HAS_CDP = chrome.runtime.getManifest().permissions.includes("debugger");
+const UNINSTALL_URL = "https://dydjwp.github.io/google-docs-auto-type/uninstall";
+
+// Chrome persists the URL across service-worker restarts. Register it on
+// install and update; opening the page alone does not submit any feedback.
+chrome.runtime.onInstalled.addListener(() => {
+  void chrome.runtime.setUninstallURL(UNINSTALL_URL).catch(error => {
+    console.warn("[Auto Type] Unable to register uninstall feedback URL:", error?.message || String(error));
+  });
+});
 const attachedTabs = new Set();
 const pendingAttach = new Map();
 const isDocs = url => /^https:\/\/docs\.google\.com\/document\//.test(url || "");
