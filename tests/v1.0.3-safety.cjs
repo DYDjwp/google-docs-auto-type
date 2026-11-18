@@ -239,7 +239,7 @@ function popupHarness({failAlways = false} = {}) {
       windowEvents.get("unload")?.();
     }
   };
-  vm.runInNewContext(read("iframe/popup.js"), {
+  vm.runInNewContext(read("iframe/config-codec.js")+"\n"+read("iframe/popup.js"), {
     chrome, document, window, console,
     setTimeout, clearTimeout, setInterval, clearInterval
   });

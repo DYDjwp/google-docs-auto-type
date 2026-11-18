@@ -113,6 +113,17 @@
           <span class="switch"><input id="showOverlay" type="checkbox"><span class="switch-track"></span></span>
         </label>
       </section>
+      <details class="config-share">
+        <summary>Configuration sharing</summary>
+        <p class="help">Copy your settings as a compact token, or paste a shared token to restore them. Text drafts are not included.</p>
+        <label class="config-label" for="configToken">Configuration token</label>
+        <input id="configToken" class="config-token" type="text" maxlength="544" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="AT1.…" disabled>
+        <div class="config-actions">
+          <button id="exportConfig" type="button" disabled>Export &amp; copy</button>
+          <button id="importConfig" type="button" disabled>Import</button>
+        </div>
+        <p class="config-status" id="configStatus" role="status" aria-live="polite"></p>
+      </details>
     </section>
 
     <section class="session" aria-label="Typing session">
@@ -127,6 +138,7 @@
       <p class="footer">Customize keyboard shortcuts at chrome://extensions/shortcuts.</p>
     </section>
   </main>
+  <script src="config-codec.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -72,7 +72,7 @@ function popupHarness({deferredLoad = false} = {}) {
     close: () => { windowEvents.get("pagehide")?.(); windowEvents.get("unload")?.(); }
   };
   const context = {chrome, document, window, console, setTimeout, clearTimeout, setInterval, clearInterval, Array, Event};
-  vm.runInNewContext(read("iframe/popup.js"), context, {filename: "popup.js"});
+  vm.runInNewContext(read("iframe/config-codec.js")+"\n"+read("iframe/popup.js"), context, {filename: "popup.js"});
   return {
     get, stored, writes, removals,
     pagehide: () => { windowEvents.get("pagehide")(); windowEvents.get("unload")?.(); },

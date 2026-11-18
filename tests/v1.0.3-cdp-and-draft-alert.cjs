@@ -245,7 +245,7 @@ function makePopupHarness({holdSave=false, edition="iframe", manifest={permissio
     addEventListener:(type,fn)=>handlers.set(type,fn),
     close(){closed=true; handlers.get("pagehide")?.();handlers.get("unload")?.();}
   };
-  vm.runInNewContext(read(edition+"/popup.js"),{
+  vm.runInNewContext(read(edition+"/config-codec.js")+"\n"+read(edition+"/popup.js"),{
     chrome,document:{getElementById:get,querySelectorAll:()=>[]},
     window,console,
     setTimeout,clearTimeout,

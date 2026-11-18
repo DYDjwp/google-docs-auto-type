@@ -8,6 +8,8 @@ The project is distributed in two editions. Both use the same interface and typi
 
 **Development (v1.0.4):** Both editions register an optional uninstall feedback page. Feedback is submitted only when the user chooses Send feedback; the extension does not send document text or an identifier to it.
 
+**Configuration sharing (v1.0.4 development):** Expand Configuration sharing, then Export & copy to create a compact AT1 token, or paste a token and select Import. Tokens include only typing settings, not drafts or document information. Imports are validated and saved locally; the iframe edition adjusts unsupported CDP modes. Settings apply to the next typing session.
+
 ## Editions
 
 | | iframe | Hybrid |
