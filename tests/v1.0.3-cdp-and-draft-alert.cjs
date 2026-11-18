@@ -185,7 +185,7 @@ test("P1: a human Backspace without an in-flight CDP command is not exempt",asyn
   assert.deepEqual(h.backspaces,[]);
 });
 
-function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.3"}, holdStatus=false} = {}) {
+function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.3"}, holdStatus=false, recoverOnCleanup=false} = {}) {
   class Element {
     constructor(){
       this.textContent="";this.value="";this.hidden=false;this.disabled=false;
@@ -233,7 +233,10 @@ function makePopupHarness({holdSave=false, edition="iframe", manifest={permissio
           if(!canSave)throw new Error("QUOTA_BYTES quota exceeded");
           for(const [key,value] of Object.entries(values)) storage.set(key,value);
         },
-        remove:async keys=>{for(const key of Array.isArray(keys)?keys:[keys])storage.delete(key);}
+        remove:async keys=>{
+          for(const key of Array.isArray(keys)?keys:[keys])storage.delete(key);
+          if(recoverOnCleanup && Array.isArray(keys))canSave=true;
+        }
       }
     }
   };
@@ -251,6 +254,11 @@ function makePopupHarness({holdSave=false, edition="iframe", manifest={permissio
   },{filename:"iframe/popup.js"});
   return {
     get,storage,
+    async edit(value){
+      get("text").value=value;
+      await get("text").fire("input");
+      await flush();
+    },
     releaseStatus(){releaseStatus?.();},
     releaseSave(){releaseSave?.();},
     setCanSave(v){canSave=v;},
@@ -389,3 +397,41 @@ test("review: stale popup status reply cannot overwrite a completed Stop command
   assert.match(h.get("state").textContent,/Stopped/);
   assert.equal(h.get("start").disabled,false);
 });
+
+for(const edition of ["iframe","hybrid"]){
+  test(edition + ": autosave quota failure is visible before Start and survives polling",async()=>{
+    const h=makePopupHarness({edition});
+    await h.ready();
+    await h.edit("Unsaved modification");
+    assert.equal(h.started,0);
+    assert.equal(h.get("draftError").hidden,false);
+    assert.match(h.get("draftErrorText").textContent,/copy it before closing/i);
+    await h.poll();
+    assert.equal(h.get("draftError").hidden,false);
+    h.setCanSave(true);
+    await h.edit("Newest draft");
+    assert.equal(h.storage.get("autoTypeDraft:17"),"Newest draft");
+    assert.equal(h.get("draftError").hidden,true);
+  });
+  test(edition + ": autosave recovers by reclaiming closed-tab drafts without Start",async()=>{
+    const h=makePopupHarness({edition,recoverOnCleanup:true});
+    await h.ready();
+    await h.edit("Recovered draft");
+    assert.equal(h.storage.get("autoTypeDraft:17"),"Recovered draft");
+    assert.equal(h.storage.has("autoTypeDraft:99"),false);
+    assert.equal(h.get("draftError").hidden,true);
+    assert.equal(h.started,0);
+  });
+  test(edition + ": pending autosave cannot resurrect cleared draft",async()=>{
+    const h=makePopupHarness({edition,holdSave:true});
+    await h.ready();
+    h.setCanSave(true);
+    const edit=h.edit("Old unsaved");
+    await flush();
+    const clear=h.get("clearDraft").fire("click");
+    h.releaseSave();
+    await Promise.all([edit,clear]);
+    assert.equal(h.storage.has("autoTypeDraft:17"),false);
+    assert.equal(h.get("text").value,"");
+  });
+}

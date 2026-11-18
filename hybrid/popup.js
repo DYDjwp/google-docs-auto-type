@@ -34,20 +34,37 @@ const isDocs = url => /^https:\/\/docs\.google\.com\/document\//.test(url || "")
 
 // Preserve unfinished input per document tab for this browser session.
 // The popup is destroyed when Start is pressed or the popup is dismissed.
-let draftSaveTimer = null;
 let draftSaveTail = Promise.resolve();
+let draftRevision = 0;
+let savedDraftRevision = 0;
 let draftDirty = false;
 let draftLoaded = false;
 let clearingDraft = false;
 let starting = false;
 let popupClosing = false;
 function draftKey() { return activeTabId ? `autoTypeDraft:${activeTabId}` : null; }
-function saveDraft(value) {
+function saveDraft(value, revision = draftRevision) {
   const key = draftKey();
   if (!key) return Promise.resolve();
-  // Serialize saves and deletes so a previous autosave cannot restore a cleared draft.
-  draftSaveTail = draftSaveTail.catch(() => {}).then(() =>
-    chrome.storage.session.set({[key]: value}));
+  // Serialize the entire recovery, not just the initial write. A stale
+  // retry must never run after a newer edit or Clear draft.
+  draftSaveTail = draftSaveTail.catch(() => {}).then(async () => {
+    if (revision !== draftRevision) return;
+    try {
+      await chrome.storage.session.set({[key]: value});
+    } catch (firstError) {
+      if (revision !== draftRevision) return;
+      if (!popupClosing) showDraftSaveError(
+        "Draft not saved yet. Recovering storage; copy your text before closing.");
+      await reclaimClosedTabDrafts();
+      if (revision !== draftRevision) return;
+      await chrome.storage.session.set({[key]: value});
+    }
+    if (revision === draftRevision) {
+      savedDraftRevision = revision;
+      if (!popupClosing) hideDraftSaveError();
+    }
+  });
   return draftSaveTail;
 }
 function removeDraft() {
@@ -79,18 +96,9 @@ async function reclaimClosedTabDrafts() {
   return stale.length;
 }
 
-async function saveDraftForStart(text) {
+async function saveDraftForStart(text, revision = draftRevision) {
   try {
-    await saveDraft(text);
-    hideDraftSaveError();
-    return;
-  } catch (firstError) {
-    console.warn("[Auto Type] Could not save draft; reclaiming closed-tab drafts before retry.");
-  }
-  try {
-    await reclaimClosedTabDrafts();
-    await saveDraft(text);
-    hideDraftSaveError();
+    await saveDraft(text, revision);
   } catch (error) {
     // Do not close the popup or start typing without making the data-loss
     // risk explicit. The textarea remains available for copying the input.
@@ -103,6 +111,13 @@ async function saveDraftForStart(text) {
     failure.code = "DRAFT_SAVE_FAILED";
     throw failure;
   }
+}
+
+function autosaveDraft(text, revision = draftRevision) {
+  return saveDraftForStart(text, revision).catch(error => {
+    if (revision === draftRevision && !popupClosing) showDraftSaveError(error.message);
+    console.warn("[Auto Type] Draft autosave failed:", error.message);
+  });
 }
 
 function setMessage(message, tone = "idle") {
@@ -241,8 +256,8 @@ async function init() {
     draftLoaded = true;
     $("clearDraft").disabled = false;
     // Input might have been edited while the draft was still loading.
-    if (draftDirty) void saveDraft($("text").value)
-      .catch(error => console.warn("Unable to save text draft", error));
+    if (draftDirty && savedDraftRevision !== draftRevision)
+      void autosaveDraft($("text").value);
     await refresh();
     if (!popupClosing) timer = setInterval(refresh, 850);
   } else {
@@ -256,18 +271,15 @@ async function init() {
 $("text").addEventListener("input", () => {
   updateTextCount();
   draftDirty = true;
-  if (activeTabId && !clearingDraft) {
-    clearTimeout(draftSaveTimer);
-    const value = $("text").value;
-    draftSaveTimer = setTimeout(() => {
-      void saveDraft(value).catch(error => console.warn("Unable to save text draft", error));
-    }, 180);
-  }
+  const revision = ++draftRevision;
+  // Queue immediately, reducing the chance of the popup closing before a write.
+  if (activeTabId && !clearingDraft && !starting)
+    void autosaveDraft($("text").value, revision);
 });
 $("clearDraft").addEventListener("click", async () => {
   if (!activeTabId || !draftLoaded || clearingDraft || starting) return;
   clearingDraft = true;
-  clearTimeout(draftSaveTimer);
+  ++draftRevision;
   $("clearDraft").disabled = true;
   $("text").disabled = true;
   const previousText = $("text").value;
@@ -277,6 +289,8 @@ $("clearDraft").addEventListener("click", async () => {
   draftDirty = false;
   try {
     await removeDraft();
+    savedDraftRevision = draftRevision;
+    hideDraftSaveError();
     setMessage("Draft cleared for this document", "ok");
   } catch (error) {
     $("text").value = previousText;
@@ -345,7 +359,6 @@ $("start").addEventListener("click", async () => {
   $("text").disabled = true;
   try {
     // Always finish saving the source text before this popup can close.
-    clearTimeout(draftSaveTimer);
     await saveDraftForStart(text);
     // Install the MAIN-world bridge from the popup, independently of the
     // background service worker. This prevents a missing runtime.onMessage
@@ -402,10 +415,10 @@ $("stop").addEventListener("click", () => controlTask("AT_PAGE_STOP"));
 window.addEventListener("unload", () => { if (timer) clearInterval(timer); });
 window.addEventListener("pagehide", () => {
   popupClosing = true;
-  clearTimeout(draftSaveTimer);
-  // Closing an unedited popup (especially while init awaits storage.get)
-  // must never overwrite its saved draft with an empty textarea.
-  if (activeTabId && draftDirty && !clearingDraft)
-    void saveDraft($("text").value).catch(() => {});
+  // Closing a popup cannot be cancelled reliably. Retry unsaved edits
+  // best-effort; the visible warning is produced while the popup is open.
+  if (activeTabId && draftDirty && !clearingDraft &&
+      savedDraftRevision !== draftRevision)
+    void autosaveDraft($("text").value);
 });
 init().catch(e => setMessage(`Initialization failed: ${e.message}`, "error"));

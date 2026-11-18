@@ -26,5 +26,5 @@ jobs:
               node --check "$edition/$script"
             done
           done
-      - name: Run existing and v1.0.3 regression tests
+      - name: Run regression tests
         run: node --test tests/*.cjs

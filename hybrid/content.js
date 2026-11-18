@@ -352,13 +352,20 @@
     };
     const watch = node => {
       if (!node || watched.has(node)) return;
-      watched.add(node);
-      for (const type of ["keydown", "keypress", "keyup"])
-        node.addEventListener(type, onKey, true);
+      try {
+        for (const type of ["keydown", "keypress", "keyup"]) node.addEventListener(type, onKey, true);
+        watched.add(node);
+      } catch (error) {
+        for (const type of ["keydown", "keypress", "keyup"]) {
+          try { node.removeEventListener(type, onKey, true); } catch {}
+        }
+        throw error;
+      }
     };
     let interval;
     keyboardLockController = () => {
       enabled = false;
+      task.syncKeyboardFrame = null;
       if (interval !== undefined) clearInterval(interval);
       for (const node of watched) {
         for (const type of ["keydown", "keypress", "keyup"]) {
@@ -367,11 +374,10 @@
         }
       }
     };
+    task.syncKeyboardFrame = snapshot => watch(snapshot.doc);
     const poll = () => {
-      try {
-        const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
-        watch(frame?.contentDocument);
-      } catch { /* cross-origin or replaced iframe */ }
+      try { syncInputProtection(task); }
+      catch { /* Retried synchronously before the next input. */ }
     };
     try {
       watch(document);
@@ -419,14 +425,20 @@
     };
     const watch = node => {
       if (!node?.addEventListener || watched.has(node)) return;
-      watched.add(node);
-      for (const type of MOUSE_LOCK_EVENTS) {
-        node.addEventListener(type, onMouse, {capture: true, passive: false});
+      try {
+        for (const type of MOUSE_LOCK_EVENTS) node.addEventListener(type, onMouse, {capture: true, passive: false});
+        watched.add(node);
+      } catch (error) {
+        for (const type of MOUSE_LOCK_EVENTS) {
+          try { node.removeEventListener(type, onMouse, true); } catch {}
+        }
+        throw error;
       }
     };
     let interval;
     mouseLockController = () => {
       enabled = false; // Retired listeners cannot block input after resume.
+      task.syncMouseFrame = null;
       if (interval !== undefined) clearInterval(interval);
       for (const node of watched) {
         for (const type of MOUSE_LOCK_EVENTS) {
@@ -435,12 +447,15 @@
         }
       }
     };
+    task.syncMouseFrame = snapshot => {
+      if (snapshot.doc) {
+        watch(snapshot.frame?.contentWindow);
+        watch(snapshot.doc);
+      }
+    };
     const poll = () => {
-      try {
-        const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
-        watch(frame?.contentWindow);
-        watch(frame?.contentDocument);
-      } catch { /* Google Docs may replace or isolate its input iframe. */ }
+      try { syncInputProtection(task); }
+      catch { /* Retried synchronously before the next input. */ }
     };
     try {
       watch(window);
@@ -480,13 +495,32 @@
   // Matching frame identity is necessary, but not proof of caret identity.
   function correctionFrameSnapshot() {
     const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
-    try { return {frame, doc: frame?.contentDocument || null, accessible: true}; }
+    try {
+      const doc = frame?.contentDocument || null;
+      return {frame, doc, accessible: !frame || !!doc};
+    }
     catch { return {frame, doc: null, accessible: false}; }
   }
   function correctionFrameUnchanged(before) {
     const after = correctionFrameSnapshot();
     return before.accessible && after.accessible &&
       before.frame === after.frame && before.doc === after.doc;
+  }
+
+  // Synchronize all three guards against one snapshot, in interception
+  // order. A timer is only a convenience; never trust a newly seen frame
+  // for correction until these synchronous registrations have succeeded.
+  function syncInputProtection(task) {
+    const snapshot = correctionFrameSnapshot();
+    if (!snapshot.accessible && (task.options.keyboardLock ||
+        task.options.mouseLock || task.options.fixTypo))
+      throw new Error("Editor input iframe is inaccessible; input protection cannot be verified");
+    task.syncMouseFrame?.(snapshot);
+    task.syncKeyboardFrame?.(snapshot);
+    task.syncCorrectionFrame?.(snapshot);
+    if (!correctionFrameUnchanged(snapshot))
+      throw new Error("Editor input iframe changed while installing input protection");
+    return snapshot;
   }
 
   function guardCorrectionPosition(task) {
@@ -512,20 +546,21 @@
     };
     const watch = node => {
       if (!node || observed.has(node)) return;
-      for (const type of types) node.addEventListener(type, onUserAction, true);
-      observed.add(node);
-    };
-    watch(document);
-    const poll = () => {
       try {
-        const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
-        watch(frame?.contentDocument);
-      } catch { /* Docs may replace or isolate its input iframe. */ }
+        for (const type of types) node.addEventListener(type, onUserAction, true);
+        observed.add(node);
+      } catch (error) {
+        for (const type of types) {
+          try { node.removeEventListener(type, onUserAction, true); } catch {}
+        }
+        throw error;
+      }
     };
-    poll();
-    const interval = setInterval(poll, 1000);
-    return () => {
-      clearInterval(interval);
+    task.syncCorrectionFrame = snapshot => watch(snapshot.doc);
+    let interval;
+    const cleanup = () => {
+      task.syncCorrectionFrame = null;
+      if (interval !== undefined) clearInterval(interval);
       for (const node of observed) {
         for (const type of types) {
           try { node.removeEventListener(type, onUserAction, true); }
@@ -533,9 +568,21 @@
         }
       }
     };
+    try {
+      watch(document);
+      // A single poll keeps registration order correct for new frames.
+      const poll = () => {
+        try { syncInputProtection(task); }
+        catch { /* The next synchronous input check fails closed. */ }
+      };
+      poll();
+      interval = setInterval(poll, 1000);
+      return cleanup;
+    } catch (error) { cleanup(); throw error; }
   }
 
   async function sendCharacter(task, character) {
+    syncInputProtection(task);
     if (task.mode === "iframe") {
       try { await insertViaIframe(character, task.options.enterStrategy); return; }
       catch (e) {
@@ -548,6 +595,7 @@
     }
     const info = frameTarget();
     if (info) focusFrame(info);
+    syncInputProtection(task);
     task.cdpKeyInFlight = true;
     task.cdpKeyKind = character === "\n" ? "Enter" : null;
     try { await sendToBackground("AT_BG_INSERT", {char: character}); }
@@ -557,7 +605,11 @@
     }
   }
 
-  async function sendBackspace(task) {
+  async function sendBackspace(task, correctionFrame) {
+    syncInputProtection(task);
+    if (!correctionFrameUnchanged(correctionFrame) || !isActive(task) ||
+        task.paused || task.correctionUnsafe)
+      throw new Error(CORRECTION_INTERRUPTED);
     // In iframe mode, corrections use exactly the verified Backspace sequence.
     if (task.mode === "iframe") {
       // Never repeat a destructive edit via another transport when the
@@ -566,7 +618,8 @@
       return;
     }
     const info = frameTarget();
-    if (info) focusFrame(info);
+    // Do not refocus a different element immediately before a destructive edit.
+    if (info && info.doc !== correctionFrame.doc) throw new Error(CORRECTION_INTERRUPTED);
     task.cdpKeyInFlight = true;
     task.cdpKeyKind = "Backspace";
     task.cdpBackspaceExpected = true;
@@ -659,7 +712,7 @@
           task.correctionPending = true;
           task.correctionUnsafe = false;
           try {
-            const correctionFrame = correctionFrameSnapshot();
+            const correctionFrame = syncInputProtection(task);
             await sendCharacter(task, accidental);
             await pauseAwareWait(task, task.options.fixPauseMs);
             if (!isActive(task) || task.correctionUnsafe ||
@@ -668,7 +721,7 @@
               if (isActive(task)) stop();
               break;
             }
-            await sendBackspace(task);
+            await sendBackspace(task, correctionFrame);
             await pauseAwareWait(task, Math.min(250, task.options.fixPauseMs / 2));
             if (!isActive(task) || task.correctionUnsafe ||
                 !correctionFrameUnchanged(correctionFrame)) {

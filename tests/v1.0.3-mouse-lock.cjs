@@ -50,7 +50,7 @@ function event(type, {trusted = true, buttons = 0, path = [], key = ""} = {}) {
 function makeHarness({
   edition = "iframe", advancedMode = true, mouseLock = true,
   showOverlay = false, startDelay = 1, failWait = false,
-  keyboardLock = false, fixTypo = false
+  keyboardLock = false, fixTypo = false, blockWaits = 1
 } = {}) {
   const window = new FakeTarget();
   const document = new FakeTarget();
@@ -60,7 +60,7 @@ function makeHarness({
   let onMessage;
   let elapsed = 0;
   let waitResolve = null;
-  let blockedOnce = false;
+  let blockedCount = 0;
   let nextInterval = 0;
   const intervals = new Map();
   const logs = [];
@@ -108,8 +108,8 @@ function makeHarness({
     sendMessage: async message => {
       if (message.type === "AT_BG_WAIT") {
         if (failWait) throw new Error("Invalid wait duration");
-        if (!blockedOnce) {
-          blockedOnce = true;
+        if (blockedCount < blockWaits) {
+          blockedCount++;
           return new Promise(resolve => {
             waitResolve = () => {elapsed += message.ms; resolve({ok: true});};
           });
@@ -151,6 +151,10 @@ function makeHarness({
     release() {
       assert.ok(waitResolve,"no pending pacing wait");
       const fn = waitResolve;waitResolve=null;fn();
+    },
+    async waitForPacing() {
+      for(let i=0;i<25 && !waitResolve;i++) await flush(1);
+      assert.ok(waitResolve);
     },
     pollFrames() {for (const cb of [...intervals.values()]) cb();},
     replaceFrame() {
@@ -407,4 +411,32 @@ for (const edition of ["iframe","hybrid"]) {
     assert.equal(status.index,0);
     assert.deepEqual(h.edits.map(e=>e.action),["type"]);
   });
+}
+
+for(const edition of ["iframe","hybrid"]) {
+  for(const keyboardLock of [true,false]) {
+    test(edition + ": new iframe is protected before correction without any polling (keyboard=" + keyboardLock + ")", async()=>{
+      const h=makeHarness({edition,keyboardLock,fixTypo:true,startDelay:0,blockWaits:2});
+      // One ordinary character delay fits in a single pacing slice.
+      h.options.cpm=1800;
+      await h.start("1a");
+      assert.equal(h.edits[0].char,"1");
+      const {newDoc}=h.replaceFrame();
+      // No pollFrames call: release ordinary pacing and reach the typo wait.
+      h.release();
+      await h.waitForPacing();
+      assert.equal(h.edits.length,2);
+      assert.equal(h.edits[1].action,"type");
+      for(let i=0;i<2;i++){
+        const key=event("keydown",{key:"ArrowLeft"});
+        newDoc.dispatchEvent(key);
+        if(keyboardLock) assert.equal(key.defaultPrevented,true);
+      }
+      await h.finish();
+      const status=h.send("AT_PAGE_STATUS").status;
+      assert.equal(status.state,keyboardLock?"done":"stopped");
+      assert.equal(h.edits.filter(e=>e.action==="backspace").length,keyboardLock?1:0);
+      assert.equal(status.index,keyboardLock?2:1);
+    });
+  }
 }

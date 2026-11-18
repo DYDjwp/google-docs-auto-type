@@ -53,6 +53,11 @@ The extension attempts to preserve paragraph breaks, including consecutive blank
 
 
 
+## v1.0.3 emergency fixes
+
+- Synchronize keyboard, mouse and correction guards with the current editor iframe before each input and correction; refuse unsafe Backspace.
+- Recover failed autosaves immediately and display a persistent copy-before-closing warning if saving fails. Serialize recovery with newer edits and draft clearing.
+
 ## v1.0.3 changes
 
 - **Version display:** The popup title reads the installed manifest version dynamically, including prerelease names.
