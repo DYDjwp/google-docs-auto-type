@@ -4,7 +4,7 @@ Auto Type is a Chrome extension for entering text into Google Docs at a configur
 
 The project is distributed in two editions. Both use the same interface and typing controls; the Hybrid edition adds Chrome DevTools Protocol (CDP) as an alternative input method.
 
-**Current beta: v1.0.3-beta.** Download from [Releases](../../releases). The current stable download is [v1.0.2](../../releases/tag/v1.0.2).
+**Current stable version: v1.0.3.** Download from [GitHub Releases](../../releases/latest).
 
 ## Editions
 
@@ -13,7 +13,7 @@ The project is distributed in two editions. Both use the same interface and typi
 | Input method | Google Docs iframe | iframe first; CDP fallback |
 | Chrome debugger permission | Not required | Required |
 | Directory | [`iframe/`](iframe/) | [`hybrid/`](hybrid/) |
-| Latest stable package | `auto-type-1.0.2-iframe.zip` | `auto-type-1.0.2-hybrid.zip` |
+| Latest stable package | `auto-type-1.0.3-iframe.zip` | `auto-type-1.0.3-hybrid.zip` |
 
 The iframe edition is recommended unless CDP support is specifically needed. Chrome does not support requesting the `debugger` permission as an optional permission, so Hybrid is maintained as a separate extension package.
 
@@ -53,7 +53,10 @@ The extension attempts to preserve paragraph breaks, including consecutive blank
 
 
 
-## v1.0.3-beta changes
+## v1.0.3 changes
+
+- **Version display:** The popup title reads the installed manifest version dynamically, including prerelease names.
+- **Final review:** Safer input-frame replacement handling during corrections, resilient keyboard-lock cleanup, and protection against stale popup status replies.
 
 - **Advanced Mouse lock:** Optional, off by default. While typing, blocks trusted mouse clicks, dragging, selection and wheel scrolling in the Google Docs tab without hiding the cursor or stealing keyboard focus. Pausing, stopping or finishing releases the guard; floating controls remain usable. This is best-effort DOM event interception, not an OS-wide pointer lock.
 

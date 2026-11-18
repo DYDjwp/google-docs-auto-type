@@ -299,7 +299,7 @@ test("Advanced popup exposes an off-by-default Mouse lock setting",()=>{
     assert.ok(html.indexOf('id="mouseLock"')>html.indexOf('id="advancedPanel"'));
     assert.match(script, /mouseLock: false/);
     assert.match(script, /const TOGGLES = \[[^\]]*"mouseLock"/);
-    assert.equal(JSON.parse(read(edition+"/manifest.json")).version_name,"1.0.3-beta");
+    assert.equal(JSON.parse(read(edition+"/manifest.json")).version_name,"1.0.3");
   }
 });
 
@@ -392,4 +392,19 @@ for (const edition of ["iframe", "hybrid"]) {
       });
     }
   }
+}
+
+for (const edition of ["iframe","hybrid"]) {
+  test(edition + ": correction refuses Backspace after editor iframe replacement", async () => {
+    const h=makeHarness({edition,fixTypo:true,startDelay:0});
+    await h.start("a");
+    assert.deepEqual(h.edits.map(e=>e.action),["type"]);
+    h.replaceFrame();
+    h.pollFrames();
+    await h.finish();
+    const status=h.send("AT_PAGE_STATUS").status;
+    assert.equal(status.state,"stopped");
+    assert.equal(status.index,0);
+    assert.deepEqual(h.edits.map(e=>e.action),["type"]);
+  });
 }

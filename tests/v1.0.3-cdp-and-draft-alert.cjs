@@ -185,7 +185,7 @@ test("P1: a human Backspace without an in-flight CDP command is not exempt",asyn
   assert.deepEqual(h.backspaces,[]);
 });
 
-function makePopupHarness({holdSave=false} = {}) {
+function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.3"}, holdStatus=false} = {}) {
   class Element {
     constructor(){
       this.textContent="";this.value="";this.hidden=false;this.disabled=false;
@@ -206,16 +206,21 @@ function makePopupHarness({holdSave=false} = {}) {
   let releaseSave;
   const gate = holdSave ? new Promise(resolve=>{releaseSave=resolve;}) : Promise.resolve();
   let started=0,closed=false;
+  let statusReads=0, releaseStatus;
   const intervals=[];
   const storage = new Map([["autoTypeDraft:17","Saved"],["autoTypeDraft:99","Old"]]);
   const chrome = {
-    runtime:{getManifest:()=>({permissions:[]})},
+    runtime:{getManifest:()=>manifest},
     commands:{getAll:async()=>[]},
     tabs:{
       query:async query=>query.active ? [{id:17,url:"https://docs.google.com/document/d/xyz/edit"}] : [{id:17}],
       sendMessage:async(id,payload)=>{
         if(payload.type==="AT_PAGE_START")started++;
-        return {ok:true,status:{state:payload.type==="AT_PAGE_START"?"running":"idle",index:0,total:0}};
+        if(payload.type==="AT_PAGE_STATUS" && ++statusReads>1 && holdStatus) {
+          await new Promise(resolve=>{releaseStatus=resolve;});
+          return {ok:true,status:{state:"running",index:0,total:1}};
+        }
+        return {ok:true,status:{state:payload.type==="AT_PAGE_START"?"running":payload.type==="AT_PAGE_PAUSE"?"paused":payload.type==="AT_PAGE_STOP"?"stopped":"idle",index:0,total:0}};
       }
     },
     scripting:{executeScript:async()=>{}},
@@ -237,7 +242,7 @@ function makePopupHarness({holdSave=false} = {}) {
     addEventListener:(type,fn)=>handlers.set(type,fn),
     close(){closed=true; handlers.get("pagehide")?.();handlers.get("unload")?.();}
   };
-  vm.runInNewContext(read("iframe/popup.js"),{
+  vm.runInNewContext(read(edition+"/popup.js"),{
     chrome,document:{getElementById:get,querySelectorAll:()=>[]},
     window,console,
     setTimeout,clearTimeout,
@@ -246,6 +251,7 @@ function makePopupHarness({holdSave=false} = {}) {
   },{filename:"iframe/popup.js"});
   return {
     get,storage,
+    releaseStatus(){releaseStatus?.();},
     releaseSave(){releaseSave?.();},
     setCanSave(v){canSave=v;},
     get started(){return started;},
@@ -356,4 +362,30 @@ test("review: CDP correction passes its own Backspace but blocks the second trus
   assert.deepEqual(h.observedKeys.map(e=>[e.type,e.defaultPrevented]),[
     ["keydown",false],["keydown",true],["keyup",false]
   ]);
+});
+
+for (const edition of ["iframe","hybrid"]) {
+  test(edition + ": popup dynamically prefers manifest version_name with version fallback",async()=>{
+    for(const [manifest,expected] of [
+      [{permissions:[],version:"7.8.9",version_name:"7.8.9-beta"},"v7.8.9-beta"],
+      [{permissions:[],version:"9.4.2"},"v9.4.2"]
+    ]) {
+      const h=makePopupHarness({edition,manifest});
+      await h.ready();
+      assert.equal(h.get("extensionVersion").textContent,expected);
+    }
+    assert.match(read(edition+"/popup.html"),/id="extensionVersion"/);
+  });
+}
+test("review: stale popup status reply cannot overwrite a completed Stop command",async()=>{
+  const h=makePopupHarness({holdStatus:true});
+  await h.ready();
+  const polling=h.poll();
+  await flush();
+  await h.get("stop").fire("click");
+  assert.match(h.get("state").textContent,/Stopped/);
+  h.releaseStatus();
+  await polling;
+  assert.match(h.get("state").textContent,/Stopped/);
+  assert.equal(h.get("start").disabled,false);
 });

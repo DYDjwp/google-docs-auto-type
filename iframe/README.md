@@ -2,9 +2,9 @@
 
 This is the iframe-only build of Auto Type. It enters text through Google Docs' internal input iframe and does not request Chrome's `debugger` permission.
 
-## Version 1.0.3-beta
+## Version 1.0.3
 
-This version adds an Advanced Mode Mouse lock and includes safe interruption handling for typo correction, closed-tab draft cleanup, and a draft-quota recovery path.
+This version adds an Advanced Mode Mouse lock and includes safe interruption handling for typo correction, closed-tab draft cleanup, and a draft-quota recovery path. The popup displays the installed version directly from its manifest.
 
 ## Install
 
