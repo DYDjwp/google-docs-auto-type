@@ -341,8 +341,9 @@
     if (!task.options.keyboardLock) return;
     disableKeyboardLock();
     const watched = new Set();
+    let enabled = true;
     const onKey = event => {
-      if (job !== task || task.state !== "running" || !event.isTrusted ||
+      if (!enabled || job !== task || task.state !== "running" || !event.isTrusted ||
           isExpectedCdpKey(task, event)) return;
       // Consume the event before pause changes the task state.
       event.preventDefault();
@@ -351,24 +352,35 @@
     };
     const watch = node => {
       if (!node || watched.has(node)) return;
+      watched.add(node);
       for (const type of ["keydown", "keypress", "keyup"])
         node.addEventListener(type, onKey, true);
-      watched.add(node);
     };
-    watch(document);
-    const poll = () => {
-      const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
-      try { watch(frame?.contentDocument); } catch { /* cross-origin */ }
-    };
-    poll();
-    const interval = setInterval(poll, 1000);
+    let interval;
     keyboardLockController = () => {
-      clearInterval(interval);
+      enabled = false;
+      if (interval !== undefined) clearInterval(interval);
       for (const node of watched) {
-        for (const type of ["keydown", "keypress", "keyup"])
-          node.removeEventListener(type, onKey, true);
+        for (const type of ["keydown", "keypress", "keyup"]) {
+          try { node.removeEventListener(type, onKey, true); }
+          catch (error) { console.warn("[Auto Type] Keyboard lock listener cleanup failed", error); }
+        }
       }
     };
+    const poll = () => {
+      try {
+        const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
+        watch(frame?.contentDocument);
+      } catch { /* cross-origin or replaced iframe */ }
+    };
+    try {
+      watch(document);
+      poll();
+      interval = setInterval(poll, 1000);
+    } catch (error) {
+      disableKeyboardLock();
+      throw error;
+    }
   }
   function disableKeyboardLock() {
     // Clear the controller first, even if a listener cannot be removed.
@@ -464,6 +476,19 @@
   // and stop rather than issuing Backspace at a potentially moved caret.
   const CORRECTION_INTERRUPTED =
     "Correction interrupted; a temporary typo may remain. Review the last character.";
+  // Detect editor replacement between temporary insertion and correction.
+  // Matching frame identity is necessary, but not proof of caret identity.
+  function correctionFrameSnapshot() {
+    const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
+    try { return {frame, doc: frame?.contentDocument || null, accessible: true}; }
+    catch { return {frame, doc: null, accessible: false}; }
+  }
+  function correctionFrameUnchanged(before) {
+    const after = correctionFrameSnapshot();
+    return before.accessible && after.accessible &&
+      before.frame === after.frame && before.doc === after.doc;
+  }
+
   function guardCorrectionPosition(task) {
     const observed = new Set();
     const types = ["pointerdown", "mousedown", "keydown"];
@@ -634,16 +659,19 @@
           task.correctionPending = true;
           task.correctionUnsafe = false;
           try {
+            const correctionFrame = correctionFrameSnapshot();
             await sendCharacter(task, accidental);
             await pauseAwareWait(task, task.options.fixPauseMs);
-            if (!isActive(task) || task.correctionUnsafe) {
+            if (!isActive(task) || task.correctionUnsafe ||
+                !correctionFrameUnchanged(correctionFrame)) {
               // A moved cursor could make Backspace erase the user's text.
               if (isActive(task)) stop();
               break;
             }
             await sendBackspace(task);
             await pauseAwareWait(task, Math.min(250, task.options.fixPauseMs / 2));
-            if (!isActive(task) || task.correctionUnsafe) {
+            if (!isActive(task) || task.correctionUnsafe ||
+                !correctionFrameUnchanged(correctionFrame)) {
               if (isActive(task)) stop();
               break;
             }

@@ -19,11 +19,17 @@ const FIELDS = ["cpm", "jitter", "punctuationMs", "newlineMs", "restMinChars",
 const TOGGLES = ["rest", "advancedMode", "keyboardLock", "mouseLock", "showOverlay"];
 const FEATURES = ["typo", "fixTypo", "deepRest"];
 const $ = id => document.getElementById(id);
-const HAS_CDP = chrome.runtime.getManifest().permissions.includes("debugger");
+const manifest = chrome.runtime.getManifest();
+const HAS_CDP = manifest.permissions.includes("debugger");
+// The manifest is the single source of truth, including prerelease names.
+const displayVersion = manifest.version_name || manifest.version;
+$("extensionVersion").textContent = displayVersion ? `v${displayVersion}` : "";
 let options = {...DEFAULTS};
 let activeTabId = null;
 let currentState = "idle";
 let timer = null;
+let statusRevision = 0;
+let controlPending = false;
 const isDocs = url => /^https:\/\/docs\.google\.com\/document\//.test(url || "");
 
 // Preserve unfinished input per document tab for this browser session.
@@ -167,7 +173,8 @@ function renderStatus(status) {
   $("percentage").textContent = `${percentage}%`;
   $("pause").disabled = !["paused", "running"].includes(state);
   $("stop").disabled = !["paused", "running"].includes(state);
-  $("start").disabled = starting || clearingDraft || ["paused", "running"].includes(state);
+  $("start").disabled = !draftLoaded || starting || clearingDraft || controlPending ||
+    ["paused", "running"].includes(state);
   $("pause").textContent = state === "paused" ? "Resume" : "Pause";
   const messages = {
     idle: "Ready · Text will be typed into the current Google Doc",
@@ -181,11 +188,15 @@ function renderStatus(status) {
 }
 
 async function refresh() {
-  if (!activeTabId) return;
+  if (!activeTabId || starting || controlPending) return;
+  const revision = ++statusRevision;
   try {
     const answer = await pageMessage("AT_PAGE_STATUS");
-    if (answer?.ok) renderStatus(answer.status);
-  } catch (e) { setMessage(`Cannot connect to the document: ${e.message}`, "error"); }
+    if (!popupClosing && revision === statusRevision && answer?.ok) renderStatus(answer.status);
+  } catch (e) {
+    if (!popupClosing && revision === statusRevision)
+      setMessage(`Cannot connect to the document: ${e.message}`, "error");
+  }
 }
 
 
@@ -324,8 +335,10 @@ $("start").addEventListener("click", async () => {
   const text = $("text").value;
   if (!text.trim()) { setMessage("Paste some text first", "error"); return; }
   if (text.length > 200000) { setMessage("Maximum 200,000 characters per session", "error"); return; }
-  if (!activeTabId || clearingDraft || starting || ["paused", "running"].includes(currentState)) return;
+  if (!activeTabId || !draftLoaded || clearingDraft || starting || controlPending ||
+      ["paused", "running"].includes(currentState)) return;
   starting = true;
+  ++statusRevision;
   const startOptions = {...options};
   $("start").disabled = true;
   $("clearDraft").disabled = true;
@@ -359,22 +372,33 @@ $("start").addEventListener("click", async () => {
     starting = false;
     $("text").disabled = false;
     $("clearDraft").disabled = !draftLoaded || clearingDraft;
-    $("start").disabled = clearingDraft || ["paused", "running"].includes(currentState);
+    $("start").disabled = !draftLoaded || clearingDraft || controlPending ||
+      ["paused", "running"].includes(currentState);
   }
 });
-$("pause").addEventListener("click", async () => {
+async function controlTask(type) {
+  if (starting || controlPending || !activeTabId) return;
+  controlPending = true;
+  ++statusRevision; // Ignore status replies issued before the user action.
+  $("pause").disabled = true;
+  $("stop").disabled = true;
+  $("start").disabled = true;
   try {
-    const type = currentState === "paused" ? "AT_PAGE_RESUME" : "AT_PAGE_PAUSE";
     const result = await pageMessage(type);
-    if (result?.ok) renderStatus(result.status);
+    if (!result?.ok) throw new Error(result?.error || "Could not control task");
+    renderStatus(result.status);
   } catch (e) { setMessage(e.message, "error"); }
-});
-$("stop").addEventListener("click", async () => {
-  try {
-    const result = await pageMessage("AT_PAGE_STOP");
-    if (result?.ok) renderStatus(result.status);
-  } catch (e) { setMessage(e.message, "error"); }
-});
+  finally {
+    controlPending = false;
+    const active = ["paused", "running"].includes(currentState);
+    $("pause").disabled = !active;
+    $("stop").disabled = !active;
+    $("start").disabled = !draftLoaded || clearingDraft || active;
+  }
+}
+$("pause").addEventListener("click", () =>
+  controlTask(currentState === "paused" ? "AT_PAGE_RESUME" : "AT_PAGE_PAUSE"));
+$("stop").addEventListener("click", () => controlTask("AT_PAGE_STOP"));
 window.addEventListener("unload", () => { if (timer) clearInterval(timer); });
 window.addEventListener("pagehide", () => {
   popupClosing = true;
