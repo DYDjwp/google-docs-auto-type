@@ -44,3 +44,9 @@ textarea{display:block;width:100%;height:152px;min-height:108px;max-height:250px
 .config-actions button:hover:not(:disabled){background:#e7efe8}
 .config-status{margin:8px 0 0;font-size:11px;color:#38694e;line-height:1.4;overflow-wrap:anywhere}
 .config-status:empty{display:none}.config-status.config-error{color:#a64e45}
+
+/* JSON backup controls share the same compact disclosure. */
+.config-token{height:92px;min-height:62px;max-height:200px;resize:vertical;line-height:1.45;overflow:auto}
+.config-format{display:block;width:100%;padding:8px 9px;border:1px solid #d9e0d8;border-radius:6px;background:#fff;color:#32463a;font-size:11.5px}
+.config-format:focus-visible{outline:2px solid #739c83;outline-offset:2px}
+.config-files button{font-weight:550;font-size:10.5px;color:#506259;padding:7px}

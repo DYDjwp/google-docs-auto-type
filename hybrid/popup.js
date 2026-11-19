@@ -179,6 +179,10 @@ function syncConfigControls() {
   $("exportConfig").disabled = blocked;
   $("importConfig").disabled = blocked;
   $("configToken").disabled = blocked;
+  $("configFormat").disabled = blocked;
+  $("downloadConfig").disabled = blocked;
+  $("openConfig").disabled = blocked;
+  $("configFile").disabled = blocked;
   if (configReady) {
     for (const key of [...FIELDS, ...TOGGLES, ...FEATURES, "mode", "deepRestAt", "enterStrategy", "reset"])
       $(key).disabled = configBusy;
@@ -191,7 +195,8 @@ $("exportConfig").addEventListener("click", async () => {
   if (!configReady || configBusy) return;
   const input = $("configToken");
   try {
-    const token = AutoTypeConfig.encode(options);
+    const isJSON = $("configFormat").value === "json";
+    const token = isJSON ? AutoTypeConfig.encodeJSON(options) : AutoTypeConfig.encode(options);
     input.value = token;
     try {
       await navigator.clipboard.writeText(token);
@@ -200,15 +205,69 @@ $("exportConfig").addEventListener("click", async () => {
       if (input.value === token) {
         input.focus();
         input.select();
-        configMessage("Token ready (" + token.length + " characters). Copy it manually.");
+        configMessage((isJSON ? "JSON" : "Token") + " ready (" + token.length + " characters). Copy it manually.");
       }
     }
   } catch (error) { configMessage(error?.message || String(error), true); }
 });
+// Format selects the export only. Pasted JSON or tokens are auto-detected.
+// Changing format does not replace unsaved/pasted input.
+$("configFormat").addEventListener("change", () => {
+  if (!configReady || configBusy) return;
+  configMessage("");
+});
+$("configToken").addEventListener("input", () => configMessage(""));
+$("downloadConfig").addEventListener("click", () => {
+  if (!configReady || configBusy) return;
+  let url, anchor;
+  try {
+    const json = AutoTypeConfig.encodeJSON(options);
+    url = URL.createObjectURL(new Blob([json + "\n"], {type:"application/json"}));
+    anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "auto-type-config.json";
+    document.body.appendChild(anchor);
+    anchor.click();
+    configMessage("JSON backup download requested.");
+  } catch (error) {
+    configMessage("Could not download configuration. " + (error?.message || String(error)), true);
+  } finally {
+    anchor?.remove();
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+});
+$("openConfig").addEventListener("click", () => {
+  if (configReady && !configBusy) $("configFile").click();
+});
+$("configFile").addEventListener("change", async () => {
+  const file = $("configFile").files?.[0];
+  // Reset even on error so the same file can be chosen again.
+  $("configFile").value = "";
+  if (!file || !configReady || configBusy || starting) return;
+  if (file.size > AutoTypeConfig.maxJSON) {
+    configMessage("JSON backup is too large (16 KB maximum).", true);
+    return;
+  }
+  configBusy = true;
+  syncConfigControls();
+  try {
+    const raw = await file.text();
+    // Validate before replacing the editor buffer; do not silently apply.
+    AutoTypeConfig.decodeJSON(raw);
+    $("configToken").value = raw.trim();
+    $("configFormat").value = "json";
+    configMessage("JSON file loaded. Click Import to apply the configuration.");
+  } catch (error) {
+    configMessage(error?.message || String(error), true);
+  } finally {
+    configBusy = false;
+    syncConfigControls();
+  }
+});
 $("importConfig").addEventListener("click", async () => {
   if (!configReady || configBusy || starting) return;
   let next;
-  try { next = AutoTypeConfig.decode($("configToken").value); }
+  try { next = AutoTypeConfig.decodeAny($("configToken").value); }
   catch (error) { configMessage(error?.message || String(error), true); return; }
   const adjusted = !HAS_CDP && next.mode !== "iframe";
   if (adjusted) next.mode = "iframe";

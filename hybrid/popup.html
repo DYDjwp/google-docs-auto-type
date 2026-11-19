@@ -115,12 +115,23 @@
       </section>
       <details class="config-share">
         <summary>Configuration sharing</summary>
-        <p class="help">Copy your settings as a compact token, or paste a shared token to restore them. Text drafts are not included.</p>
-        <label class="config-label" for="configToken">Configuration token</label>
-        <input id="configToken" class="config-token" type="text" maxlength="544" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="AT1.…" disabled>
+        <p class="help">Share a short token or back up settings as JSON. Only settings are included, not text drafts.</p>
+        <label class="config-label" for="configFormat">Export format</label>
+        <select id="configFormat" class="config-format" disabled>
+          <option value="token">Token (compact)</option>
+          <option value="json">JSON (readable)</option>
+        </select>
+        <label class="config-label" for="configToken">Configuration</label>
+        <textarea id="configToken" class="config-token" rows="4" maxlength="16384" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Paste AT1.… or JSON" disabled></textarea>
+        <p class="help">Import recognizes either format. Missing JSON fields use version 1 defaults. Import replaces your settings for the next session.</p>
         <div class="config-actions">
           <button id="exportConfig" type="button" disabled>Export &amp; copy</button>
           <button id="importConfig" type="button" disabled>Import</button>
+        </div>
+        <div class="config-actions config-files">
+          <button id="downloadConfig" type="button" disabled>Download JSON</button>
+          <button id="openConfig" type="button" disabled>Open JSON file</button>
+          <input id="configFile" type="file" accept=".json,application/json" hidden disabled>
         </div>
         <p class="config-status" id="configStatus" role="status" aria-live="polite"></p>
       </details>

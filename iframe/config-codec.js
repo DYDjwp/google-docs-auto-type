@@ -6,6 +6,8 @@
   const PREFIX = "AT1.";
   const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   const MAX_TOKEN = 512;
+  const MAX_JSON = 16384;
+  const JSON_SCHEMA = 1;
   const fields = [
     ["speed", "medium", ["slow","medium","fast"]],
     ["advancedMode", false],
@@ -210,7 +212,48 @@
     reader.finish();
     return clean;
   }
+  // JSON uses the same frozen v1 defaults and validation as AT1.
+  // Strict imports reject misspelled/unknown fields rather than quietly
+  // resetting those settings to defaults. Exports whitelist the schema.
+  function encodeJSON(settings) {
+    return JSON.stringify({schemaVersion:JSON_SCHEMA, settings:normalize(settings)}, null, 2);
+  }
+  function decodeJSON(raw) {
+    if(typeof raw!=="string" || raw.length>MAX_JSON)
+      throw new Error("JSON configuration must be at most 16 KB of text.");
+    let data;
+    try { data=JSON.parse(raw.trim()); }
+    catch { throw new Error("Invalid configuration JSON."); }
+    const object = value => value!==null && typeof value==="object" && !Array.isArray(value);
+    const own = (value,key) => Object.prototype.hasOwnProperty.call(value,key);
+    if(!object(data)) throw new Error("Configuration JSON must be an object.");
+    let settings=data;
+    if(own(data,"schemaVersion") || own(data,"settings")) {
+      if(data.schemaVersion!==JSON_SCHEMA)
+        throw new Error("Unsupported JSON configuration version.");
+      if(Object.keys(data).some(key=>key!=="schemaVersion" && key!=="settings"))
+        throw new Error("Unknown JSON configuration metadata.");
+      if(!own(data,"settings") || !object(data.settings))
+        throw new Error("JSON configuration must contain a settings object.");
+      settings=data.settings;
+    }
+    const keys=Object.keys(settings);
+    if(!keys.length) throw new Error("JSON configuration has no settings.");
+    for(const key of keys) {
+      if(!own(wireDefaults,key)) throw new Error("Unknown configuration setting: "+key+".");
+    }
+    return normalize(settings);
+  }
+  function decodeAny(raw) {
+    if(typeof raw!=="string" || raw.length>MAX_JSON)
+      throw new Error("Configuration is too large or invalid.");
+    const value=raw.trim();
+    return /^[{\[]/.test(value) ? decodeJSON(raw) : decode(raw);
+  }
   // Only explicit schema fields are ever encoded. No drafts, URLs, IDs,
   // browser data or arbitrary properties are included.
-  globalThis.AutoTypeConfig = Object.freeze({encode, decode, defaults:wireDefaults, maxToken:MAX_TOKEN});
+  globalThis.AutoTypeConfig = Object.freeze({
+    encode, decode, encodeJSON, decodeJSON, decodeAny,
+    defaults:wireDefaults, maxToken:MAX_TOKEN, maxJSON:MAX_JSON
+  });
 })();
