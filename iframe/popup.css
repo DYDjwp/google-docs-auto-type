@@ -3,7 +3,7 @@
 button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.42}
 .app{padding:20px 22px 18px}
 .header{display:flex;align-items:center;justify-content:space-between;padding-bottom:19px;border-bottom:1px solid #e2e6e1}
-.identity{display:flex;align-items:center;gap:11px}.mark{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#24483e;color:#fff;letter-spacing:-1.5px;font-size:22px;font-weight:750}.mark span{color:#b4d3aa}h1{font-size:15px;margin:0;font-weight:720;letter-spacing:-.2px}.identity p{font-size:11px;color:#87918a;margin:4px 0 0}
+.identity{display:flex;align-items:center;gap:11px}.mark{display:grid;place-items:center;flex:0 0 40px;width:40px;height:40px;border-radius:10px;background:#24483e;color:#fff;font-size:22px;font-weight:750;user-select:none}.mark-word{display:inline-block;white-space:nowrap;line-height:1;letter-spacing:-1px;transform:translateY(-1px)}.mark-dot{color:#b4d3aa;letter-spacing:-.4px}h1{font-size:15px;margin:0;font-weight:720;letter-spacing:-.2px}.identity p{font-size:11px;color:#87918a;margin:4px 0 0}
 .connection{display:flex;align-items:center;gap:5px;font-size:11px;color:#38694e;white-space:nowrap}.connection:before{content:"";width:7px;height:7px;background:#6fa181;border-radius:50%}.connection.bad{color:#a64e45}.connection.bad:before{background:#c27b70}
 .composer,.controls{margin-top:20px}.section-line{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}.section-name{font-size:12px;font-weight:720;color:#414c45;margin:0}.muted{font-size:11px;color:#869088}
 textarea{display:block;width:100%;height:152px;min-height:108px;max-height:250px;resize:vertical;outline:0;padding:12px 13px;border:1px solid #d7dfd6;border-radius:8px;background:#fff;color:#2c3530;line-height:1.55;font-size:12.5px;tab-size:4}textarea:focus{border-color:#618576;box-shadow:0 0 0 2px #527c6822}textarea::placeholder{color:#aab2ab}
@@ -32,3 +32,21 @@ textarea{display:block;width:100%;height:152px;min-height:108px;max-height:250px
 
 /* Version metadata from the installed manifest. */
 .extension-version{font-size:10px;font-weight:500;color:#718078;letter-spacing:0;margin-left:5px;white-space:nowrap}
+
+/* A compact disclosure keeps configuration sharing available in either mode. */
+.config-share{margin-top:18px;border-top:1px solid #dbe3da;padding-top:13px}
+.config-share summary{cursor:pointer;font-size:12px;font-weight:650;color:#414c45}
+.config-label{display:block;margin:12px 0 5px;font-size:10.5px;color:#626f65}
+.config-token{display:block;width:100%;padding:9px;border:1px solid #d9e0d8;border-radius:6px;background:#fff;color:#32463a;font:11px ui-monospace,SFMono-Regular,Consolas,monospace}
+.config-token:focus-visible,.config-share button:focus-visible{outline:2px solid #739c83;outline-offset:2px}
+.config-actions{display:flex;gap:7px;margin-top:8px}
+.config-actions button{flex:1;border:1px solid #d5ded5;border-radius:7px;padding:8px;background:#fff;color:#285840;font-size:11.5px;font-weight:650}
+.config-actions button:hover:not(:disabled){background:#e7efe8}
+.config-status{margin:8px 0 0;font-size:11px;color:#38694e;line-height:1.4;overflow-wrap:anywhere}
+.config-status:empty{display:none}.config-status.config-error{color:#a64e45}
+
+/* JSON backup controls share the same compact disclosure. */
+.config-token{height:92px;min-height:62px;max-height:200px;resize:vertical;line-height:1.45;overflow:auto}
+.config-format{display:block;width:100%;padding:8px 9px;border:1px solid #d9e0d8;border-radius:6px;background:#fff;color:#32463a;font-size:11.5px}
+.config-format:focus-visible{outline:2px solid #739c83;outline-offset:2px}
+.config-files button{font-weight:550;font-size:10.5px;color:#506259;padding:7px}

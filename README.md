@@ -4,9 +4,16 @@ Auto Type is a Chrome extension for entering text into Google Docs at a configur
 
 The project is distributed in two editions. Both use the same interface and typing controls; the Hybrid edition adds Chrome DevTools Protocol (CDP) as an alternative input method.
 
-**Current stable version: v1.0.3.** Download from [GitHub Releases](../../releases/latest).
+**Current stable version: v1.0.3.** Download from [GitHub Releases](../../releases/latest). **Beta preview: [v1.0.4-beta](../../releases/tag/v1.0.4-beta)** (pre-release, not the default stable download).
 
-## Editions
+Chrome requires a numeric `manifest.version` (`1.0.4`). The user-facing prerelease label is provided separately as `manifest.version_name` (`1.0.4-beta`). Updating a local unpacked installation requires reloading it in `chrome://extensions`; merging the repository does not automatically update an installed Chrome extension.
+
+**Beta release (v1.0.4-beta):** Both editions register an optional uninstall feedback page. Feedback is submitted only when the user chooses Send feedback; the extension does not send document text or an identifier to it.
+
+**Configuration sharing (v1.0.4-beta):** Expand Configuration sharing, select Token (compact) or JSON (readable), and Export & copy. Import automatically recognizes either format. Download JSON creates a local `auto-type-config.json` backup; Open JSON file loads it for review before clicking Import. Both formats include only typing settings, not drafts or document information. Full JSON exports use `{"schemaVersion":1,"settings":{...}}`; imports also accept a flat settings object (for example `{"advancedMode":true,"cpm":450}`). Missing fields use frozen version 1 defaults, unknown/invalid fields are rejected, and successful imports replace settings for the next session. The iframe edition adjusts unsupported CDP modes. No new permissions or server needed.
+
+The v1.0.4-beta popup fixes the logo alignment: the green period now stays inside the `at.` badge. This is a UI-only change.
+\n## Editions
 
 | | iframe | Hybrid |
 | --- | --- | --- |
@@ -92,7 +99,7 @@ Google Docs' iframe input behavior is **undocumented and unsupported by Google**
 
 ## Privacy and permissions
 
-The extension operates on Google Docs pages and stores user preferences using `chrome.storage.local`. Entered text drafts are stored in `chrome.storage.session` per tab and cleared when the browser session ends. Text is not sent by the extension to a separate server. The project does not include analytics or external runtime libraries.
+The extension operates on Google Docs pages and stores user preferences using `chrome.storage.local`. Entered text drafts are stored in `chrome.storage.session` per tab and cleared when the browser session ends. Text is not sent by the extension to a separate server. The project does not include analytics or external runtime libraries. When uninstalled, Chrome opens the optional [feedback page](https://dydjwp.github.io/google-docs-auto-type/uninstall). Only feedback voluntarily submitted on that page is sent to a private Google Sheet.
 
 The Hybrid edition requires the sensitive `debugger` permission. Review the source and Chrome's permission prompt before installing it.
 

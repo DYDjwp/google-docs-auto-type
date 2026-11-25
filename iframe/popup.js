@@ -30,6 +30,9 @@ let currentState = "idle";
 let timer = null;
 let statusRevision = 0;
 let controlPending = false;
+let configReady = false;
+let configBusy = false;
+let settingsSaveTail = Promise.resolve();
 const isDocs = url => /^https:\/\/docs\.google\.com\/document\//.test(url || "");
 
 // Preserve unfinished input per document tab for this browser session.
@@ -155,10 +158,138 @@ function renderOptions() {
   });
 }
 
+// Serialize settings writes so a delayed field edit cannot overwrite an import.
+function writeSettings(value) {
+  const snapshot = {...value};
+  settingsSaveTail = settingsSaveTail.catch(() => {}).then(() =>
+    chrome.storage.local.set({autoTypeSettings: snapshot}));
+  return settingsSaveTail;
+}
 async function persist() {
-  try { await chrome.storage.local.set({autoTypeSettings: options}); }
+  try { await writeSettings(options); }
   catch (e) { console.warn("Unable to save settings", e); }
 }
+
+function configMessage(message, error = false) {
+  $("configStatus").textContent = message;
+  $("configStatus").classList.toggle("config-error", error);
+}
+function syncConfigControls() {
+  const blocked = !configReady || configBusy;
+  $("exportConfig").disabled = blocked;
+  $("importConfig").disabled = blocked;
+  $("configToken").disabled = blocked;
+  $("configFormat").disabled = blocked;
+  $("downloadConfig").disabled = blocked;
+  $("openConfig").disabled = blocked;
+  $("configFile").disabled = blocked;
+  if (configReady) {
+    for (const key of [...FIELDS, ...TOGGLES, ...FEATURES, "mode", "deepRestAt", "enterStrategy", "reset"])
+      $(key).disabled = configBusy;
+    for (const button of document.querySelectorAll(".speed")) button.disabled = configBusy;
+  }
+  $("start").disabled = !draftLoaded || starting || clearingDraft || controlPending || configBusy ||
+    ["paused", "running"].includes(currentState);
+}
+$("exportConfig").addEventListener("click", async () => {
+  if (!configReady || configBusy) return;
+  const input = $("configToken");
+  try {
+    const isJSON = $("configFormat").value === "json";
+    const token = isJSON ? AutoTypeConfig.encodeJSON(options) : AutoTypeConfig.encode(options);
+    input.value = token;
+    try {
+      await navigator.clipboard.writeText(token);
+      if (input.value === token) configMessage("Copied configuration · " + token.length + " characters");
+    } catch {
+      if (input.value === token) {
+        input.focus();
+        input.select();
+        configMessage((isJSON ? "JSON" : "Token") + " ready (" + token.length + " characters). Copy it manually.");
+      }
+    }
+  } catch (error) { configMessage(error?.message || String(error), true); }
+});
+// Format selects the export only. Pasted JSON or tokens are auto-detected.
+// Changing format does not replace unsaved/pasted input.
+$("configFormat").addEventListener("change", () => {
+  if (!configReady || configBusy) return;
+  configMessage("");
+});
+$("configToken").addEventListener("input", () => configMessage(""));
+$("downloadConfig").addEventListener("click", () => {
+  if (!configReady || configBusy) return;
+  let url, anchor;
+  try {
+    const json = AutoTypeConfig.encodeJSON(options);
+    url = URL.createObjectURL(new Blob([json + "\n"], {type:"application/json"}));
+    anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "auto-type-config.json";
+    document.body.appendChild(anchor);
+    anchor.click();
+    configMessage("JSON backup download requested.");
+  } catch (error) {
+    configMessage("Could not download configuration. " + (error?.message || String(error)), true);
+  } finally {
+    anchor?.remove();
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+});
+$("openConfig").addEventListener("click", () => {
+  if (configReady && !configBusy) $("configFile").click();
+});
+$("configFile").addEventListener("change", async () => {
+  const file = $("configFile").files?.[0];
+  // Reset even on error so the same file can be chosen again.
+  $("configFile").value = "";
+  if (!file || !configReady || configBusy || starting) return;
+  if (file.size > AutoTypeConfig.maxJSON) {
+    configMessage("JSON backup is too large (16 KB maximum).", true);
+    return;
+  }
+  configBusy = true;
+  syncConfigControls();
+  try {
+    const raw = await file.text();
+    // Validate before replacing the editor buffer; do not silently apply.
+    AutoTypeConfig.decodeJSON(raw);
+    $("configToken").value = raw.trim();
+    $("configFormat").value = "json";
+    configMessage("JSON file loaded. Click Import to apply the configuration.");
+  } catch (error) {
+    configMessage(error?.message || String(error), true);
+  } finally {
+    configBusy = false;
+    syncConfigControls();
+  }
+});
+$("importConfig").addEventListener("click", async () => {
+  if (!configReady || configBusy || starting) return;
+  let next;
+  try { next = AutoTypeConfig.decodeAny($("configToken").value); }
+  catch (error) { configMessage(error?.message || String(error), true); return; }
+  const adjusted = !HAS_CDP && next.mode !== "iframe";
+  if (adjusted) next.mode = "iframe";
+  configBusy = true;
+  syncConfigControls();
+  configMessage("Saving configuration…");
+  try {
+    // Do not apply anything until the validated snapshot has been saved.
+    await writeSettings(next);
+    options = next;
+    renderOptions();
+    configMessage(adjusted
+      ? "Imported. Input mode adjusted to iframe. Applies to the next typing session."
+      : "Configuration imported. Applies to the next typing session.");
+  } catch (error) {
+    configMessage("Configuration not saved. Previous settings kept. " +
+      (error?.message || String(error)), true);
+  } finally {
+    configBusy = false;
+    syncConfigControls();
+  }
+});
 
 function sanitize(key, value) {
   const input = $(key);
@@ -188,7 +319,7 @@ function renderStatus(status) {
   $("percentage").textContent = `${percentage}%`;
   $("pause").disabled = !["paused", "running"].includes(state);
   $("stop").disabled = !["paused", "running"].includes(state);
-  $("start").disabled = !draftLoaded || starting || clearingDraft || controlPending ||
+  $("start").disabled = !draftLoaded || starting || clearingDraft || controlPending || configBusy ||
     ["paused", "running"].includes(state);
   $("pause").textContent = state === "paused" ? "Resume" : "Pause";
   const messages = {
@@ -240,6 +371,8 @@ async function init() {
     options.speed = "medium";
   }
   renderOptions();
+  configReady = true;
+  syncConfigControls();
   void showShortcutHints();
   const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
   if (tab && isDocs(tab.url)) {
@@ -306,6 +439,7 @@ $("clearDraft").addEventListener("click", async () => {
 
 for (const button of document.querySelectorAll(".speed")) {
   button.addEventListener("click", async () => {
+    if (configBusy) return;
     options.speed = button.dataset.speed;
     renderOptions();
     await persist();
@@ -313,6 +447,7 @@ for (const button of document.querySelectorAll(".speed")) {
 }
 for (const key of FIELDS) {
   $(key).addEventListener("change", async () => {
+    if (configBusy) return;
     options[key] = sanitize(key, $(key).value);
     renderOptions();
     await persist();
@@ -320,6 +455,7 @@ for (const key of FIELDS) {
 }
 for (const key of TOGGLES) {
   $(key).addEventListener("change", async () => {
+    if (configBusy) return;
     options[key] = $(key).checked;
     renderOptions();
     await persist();
@@ -327,6 +463,7 @@ for (const key of TOGGLES) {
 }
 for (const key of FEATURES) {
   $(key).addEventListener("click", async () => {
+    if (configBusy) return;
     options[key] = !options[key];
     renderOptions();
     await persist();
@@ -334,12 +471,15 @@ for (const key of FEATURES) {
 }
 for (const key of ["mode", "deepRestAt", "enterStrategy"]) {
   $(key).addEventListener("change", async () => {
+    if (configBusy) return;
     options[key] = $(key).value;
     await persist();
   });
 }
 $("reset").addEventListener("click", async () => {
+  if (configBusy) return;
   options = {...DEFAULTS, advancedMode: true};
+  if (!HAS_CDP) options.mode = "iframe";
   renderOptions();
   await persist();
   setMessage("Settings restored to defaults", "ok");
@@ -349,7 +489,7 @@ $("start").addEventListener("click", async () => {
   const text = $("text").value;
   if (!text.trim()) { setMessage("Paste some text first", "error"); return; }
   if (text.length > 200000) { setMessage("Maximum 200,000 characters per session", "error"); return; }
-  if (!activeTabId || !draftLoaded || clearingDraft || starting || controlPending ||
+  if (!activeTabId || !draftLoaded || clearingDraft || starting || controlPending || configBusy ||
       ["paused", "running"].includes(currentState)) return;
   starting = true;
   ++statusRevision;
@@ -385,7 +525,7 @@ $("start").addEventListener("click", async () => {
     starting = false;
     $("text").disabled = false;
     $("clearDraft").disabled = !draftLoaded || clearingDraft;
-    $("start").disabled = !draftLoaded || clearingDraft || controlPending ||
+    $("start").disabled = !draftLoaded || clearingDraft || controlPending || configBusy ||
       ["paused", "running"].includes(currentState);
   }
 });
@@ -406,7 +546,7 @@ async function controlTask(type) {
     const active = ["paused", "running"].includes(currentState);
     $("pause").disabled = !active;
     $("stop").disabled = !active;
-    $("start").disabled = !draftLoaded || clearingDraft || active;
+    $("start").disabled = !draftLoaded || clearingDraft || configBusy || active;
   }
 }
 $("pause").addEventListener("click", () =>

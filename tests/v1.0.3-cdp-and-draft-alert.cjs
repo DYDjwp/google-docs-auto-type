@@ -185,7 +185,7 @@ test("P1: a human Backspace without an in-flight CDP command is not exempt",asyn
   assert.deepEqual(h.backspaces,[]);
 });
 
-function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.3"}, holdStatus=false, recoverOnCleanup=false} = {}) {
+function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.4"}, holdStatus=false, recoverOnCleanup=false} = {}) {
   class Element {
     constructor(){
       this.textContent="";this.value="";this.hidden=false;this.disabled=false;
@@ -245,7 +245,7 @@ function makePopupHarness({holdSave=false, edition="iframe", manifest={permissio
     addEventListener:(type,fn)=>handlers.set(type,fn),
     close(){closed=true; handlers.get("pagehide")?.();handlers.get("unload")?.();}
   };
-  vm.runInNewContext(read(edition+"/popup.js"),{
+  vm.runInNewContext(read(edition+"/config-codec.js")+"\n"+read(edition+"/popup.js"),{
     chrome,document:{getElementById:get,querySelectorAll:()=>[]},
     window,console,
     setTimeout,clearTimeout,
