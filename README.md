@@ -97,6 +97,10 @@ The Hybrid edition can use CDP if iframe preparation fails or character input re
 
 Google Docs' iframe input behavior is **undocumented and unsupported by Google**. Browser updates, document state, tab suspension, and editor focus may affect operation. This project is not affiliated with or endorsed by Google.
 
+## Uninstall feedback privacy
+
+The optional GitHub Pages uninstall feedback page performs **best-effort local PII redaction before POST** with a self-hosted, MIT-licensed [flare-redact](https://github.com/flare-collection/flare-redact) v1.6.1 browser bundle. The comment sent to Google Apps Script is a redacted copy (covering recognizable emails, phones, credit-card patterns, and other opted-in identifiers); the source textarea remains unchanged if submission fails. If the local redactor cannot load or throws, the page refuses to send feedback, rather than falling back to the raw comment. Redaction can miss identifiers or mask innocent text and **does not guarantee anonymity**; users should avoid entering personal information. The page does not send comments to the library author's servers.
+
 ## Privacy and permissions
 
 The extension operates on Google Docs pages and stores user preferences using `chrome.storage.local`. Entered text drafts are stored in `chrome.storage.session` per tab and cleared when the browser session ends. Text is not sent by the extension to a separate server. The project does not include analytics or external runtime libraries. When uninstalled, Chrome opens the optional [feedback page](https://dydjwp.github.io/google-docs-auto-type/uninstall). Only feedback voluntarily submitted on that page is sent to a private Google Sheet.

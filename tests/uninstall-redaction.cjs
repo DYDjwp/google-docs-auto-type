@@ -25,7 +25,7 @@ test('PII is redacted locally before transmission without modifying input',async
   const result=redactComment(original);
   assert.equal(typeof result.comment,'string');
   assert.equal(result.masked,true);
-  assert.doesNotMatch(result.comment,/alice@example\.com|4242 4242 4242 4242/);
+  assert.doesNotMatch(result.comment,/alice@example\.com|4242 4242 4242 4242|\+1 \(415\) 555-0123/);
   assert.match(result.comment,/Typing stopped after 5 chars/);
   assert.equal(original.includes('alice@example.com'),true);
 });
