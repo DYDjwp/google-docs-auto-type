@@ -1,0 +1,62 @@
+name: Vendor browser PII redaction dependency (one-time)
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/vendor-redactor.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned, browser-safe package and bundler
+        run: |
+          set -euo pipefail
+          npm install --no-save --ignore-scripts --no-audit --no-fund flare-redact@1.6.1 esbuild@0.25.12
+          test -f node_modules/flare-redact/LICENSE
+      - name: Bundle and verify local-only redactor
+        run: |
+          set -euo pipefail
+          mkdir -p docs/vendor
+          ./node_modules/.bin/esbuild node_modules/flare-redact/dist/index.js --bundle --platform=browser --format=esm --target=es2020 --minify --outfile=docs/vendor/flare-redact-1.6.1.mjs
+          cp node_modules/flare-redact/LICENSE docs/vendor/flare-redact-LICENSE.txt
+          cat > docs/vendor/README.md <<'EOF'
+          # Local PII redaction dependency
+
+          This directory contains a browser ESM bundle of
+          [flare-redact](https://github.com/flare-collection/flare-redact) v1.6.1,
+          distributed under the MIT license in `flare-redact-LICENSE.txt`.
+          It is bundled from the exact npm version by esbuild 0.25.12 and
+          served from this GitHub Pages repository. No third-party scripts,
+          external network requests or online PII processing are required
+          to redact user feedback at submission time.
+          EOF
+          node --input-type=module <<'NODE'
+          import {redact} from './docs/vendor/flare-redact-1.6.1.mjs';
+          const input='Email alice@example.com or call +1 (415) 555-0123. Card 4242 4242 4242 4242.';
+          const out=redact(input,{mode:'label',enable:['phone','network','contextual']});
+          if(typeof out !== 'string' || out.includes('alice@example.com') || out.includes('4242 4242 4242 4242')) {
+            throw Error('PII redaction self-check failed: '+out);
+          }
+          console.log('Library redaction smoke test passed; output length:',out.length);
+          NODE
+          node --check docs/vendor/flare-redact-1.6.1.mjs
+          wc -c docs/vendor/flare-redact-1.6.1.mjs
+      - name: Commit vendored bundle only
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/vendor/flare-redact-1.6.1.mjs docs/vendor/flare-redact-LICENSE.txt docs/vendor/README.md
+          git diff --cached --check
+          git commit -m "vendor: pin local flare-redact v1.6.1 browser bundle"
+          git push origin HEAD:main
