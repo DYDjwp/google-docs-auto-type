@@ -140,7 +140,7 @@ function popupHarness(edition,{initial={},failWrite=false,failClipboard=false,ho
     revokeObjectURL(url){revoked.push(url);}};
   const gate=holdFirstWrite?new Promise(resolve=>releaseFirst=resolve):Promise.resolve();
   const chrome={
-    runtime:{getManifest:()=>({permissions:edition==="hybrid"?["debugger"]:[],version:"1.0.4-dev"})},
+    runtime:{getManifest:()=>({permissions:edition==="hybrid"?["debugger"]:[],version:"1.0.4-beta"})},
     commands:{getAll:async()=>[]},
     storage:{
       local:{
@@ -351,3 +351,14 @@ for(const edition of ["iframe","hybrid"]) {
     assert.equal(h.saved.cpm,450);
   });
 }
+
+test("popup brand keeps the dot inside one centered logo element",()=>{
+  for(const edition of ["iframe","hybrid"]) {
+    const html=read(edition+"/popup.html"),css=read(edition+"/popup.css");
+    assert.match(html, /<span class="mark" aria-hidden="true"><span class="mark-word">at<span class="mark-dot">\.<\/span><\/span><\/span>/);
+    assert.match(css, /\.mark\{display:grid;place-items:center;[^}]*\}/);
+    assert.match(css, /\.mark-word\{[^}]*white-space:nowrap;/);
+    assert.match(css, /\.mark-dot\{color:#b4d3aa/);
+    assert.doesNotMatch(css, /\.mark span\{/);
+  }
+});
