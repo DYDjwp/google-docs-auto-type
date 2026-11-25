@@ -6,6 +6,8 @@ The project is distributed in two editions. Both use the same interface and typi
 
 **Current stable version: v1.0.3.** Download from [GitHub Releases](../../releases/latest). **Beta preview: [v1.0.4-beta](../../releases/tag/v1.0.4-beta)** (pre-release, not the default stable download).
 
+Chrome requires a numeric `manifest.version` (`1.0.4`). The user-facing prerelease label is provided separately as `manifest.version_name` (`1.0.4-beta`). Updating a local unpacked installation requires reloading it in `chrome://extensions`; merging the repository does not automatically update an installed Chrome extension.
+
 **Beta release (v1.0.4-beta):** Both editions register an optional uninstall feedback page. Feedback is submitted only when the user chooses Send feedback; the extension does not send document text or an identifier to it.
 
 **Configuration sharing (v1.0.4-beta):** Expand Configuration sharing, select Token (compact) or JSON (readable), and Export & copy. Import automatically recognizes either format. Download JSON creates a local `auto-type-config.json` backup; Open JSON file loads it for review before clicking Import. Both formats include only typing settings, not drafts or document information. Full JSON exports use `{"schemaVersion":1,"settings":{...}}`; imports also accept a flat settings object (for example `{"advancedMode":true,"cpm":450}`). Missing fields use frozen version 1 defaults, unknown/invalid fields are rejected, and successful imports replace settings for the next session. The iframe edition adjusts unsupported CDP modes. No new permissions or server needed.
