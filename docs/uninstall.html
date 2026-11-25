@@ -40,7 +40,7 @@
 </div></fieldset>
 <div class="details"><label for="comment">Anything else?<span class="optional">Optional</span></label><textarea id="comment" name="comment" maxlength="1500" placeholder="Feel free to tell me more."></textarea><div class="counter" id="counter" aria-hidden="true">0 / 1500</div></div>
 <div class="trap" aria-hidden="true"><label>Leave this empty<input name="website" tabindex="-1" autocomplete="off"></label></div>
-<p class="privacy">Only what you submit will be sent to a private Google Sheet. No name or email is requested. Please don’t include personal information.</p>
+<p class="privacy">Before sending, your comment is checked locally to redact recognizable email addresses, phone numbers, card numbers and some other sensitive details. Detection is not perfect: please avoid including personal information. No name or email is requested. Submitted feedback is stored in a private Google Sheet.</p>
 <div class="actions"><button class="primary" id="submit" type="submit">Send feedback</button><button class="secondary" id="skip" type="button">Skip</button></div>
 <p class="status" id="status" role="alert"></p>
 </form>
@@ -61,12 +61,14 @@ let sending = false;
 // Random per-page request ID is used only to deduplicate retries, not to identify users.
 const requestId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
 comment.addEventListener('input', () => { document.getElementById('counter').textContent = `${comment.value.length} / 1500`; });
-function finish(sent) {
+function finish(sent, masked = false) {
   form.reset();
   form.hidden = true;
   const done = document.getElementById('done');
   document.getElementById('done-title').textContent = sent ? 'Thanks for the feedback.' : 'Thanks for trying Auto Type.';
-  document.getElementById('done-text').textContent = sent ? 'Your feedback request was sent. Thanks for taking the time.' : 'No feedback was submitted. You can close this page.';
+  document.getElementById('done-text').textContent = sent
+    ? (masked ? 'Your feedback request was sent with detected personal details redacted locally. Thanks for taking the time.' : 'Your feedback request was sent. Thanks for taking the time.')
+    : 'No feedback was submitted. You can close this page.';
   done.hidden = false;
   done.focus();
 }
@@ -78,17 +80,29 @@ form.addEventListener('submit', async event => {
   const data = new FormData(form);
   const reasons = data.getAll('reason');
   const message = comment.value.trim();
+  if (message.length > 1500) { status.textContent = 'Feedback is limited to 1,500 characters.'; return; }
   if (!reasons.length && !message) { status.textContent = 'Please select a reason or leave a comment, or choose Skip.'; return; }
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(ENDPOINT)) { status.textContent = 'Feedback collection has not been configured yet. You can still report an issue on GitHub.'; return; }
   sending = true; submit.disabled = true; skip.disabled = true; submit.textContent = 'Sending…';
-  const body = new URLSearchParams({ requestId, reasons: JSON.stringify(reasons), comment: message, website: String(data.get('website') || '') });
   try {
+    // Fail closed: if the locally-hosted redaction module cannot load or run,
+    // never send the original comment to Apps Script.
+    const {redactComment} = await import('./uninstall-redaction.mjs');
+    if (typeof redactComment !== 'function') throw new Error('Privacy redactor unavailable');
+    const clean = redactComment(message);
+    if (!clean || typeof clean.comment !== 'string' || typeof clean.masked !== 'boolean')
+      throw new Error('Invalid privacy redaction result');
+    const body = new URLSearchParams({
+      requestId, reasons: JSON.stringify(reasons),
+      comment: clean.comment, website: String(data.get('website') || '')
+    });
     // A simple cross-origin POST: no API key/cookie needed. An opaque response
     // cannot confirm that Sheets stored the row, so the UI only says request sent.
     await fetch(ENDPOINT, {method:'POST', mode:'no-cors', credentials:'omit', referrerPolicy:'no-referrer', body, signal:AbortSignal.timeout(15000)});
-    finish(true);
+    finish(true, clean.masked);
   } catch (err) {
-    status.textContent = 'The request could not be confirmed. Please try again, or skip feedback. Your text is still here.';
+    // Keep original text editable when redaction fails; don't log user input.
+    status.textContent = 'Feedback could not be sent safely. The privacy check or network request failed. Please retry, or skip feedback. Your text is still here.';
   } finally { sending = false; submit.disabled = false; skip.disabled = false; submit.innerHTML = buttonMarkup; }
 });
 </script>
