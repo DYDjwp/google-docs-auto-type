@@ -13,7 +13,9 @@ Chrome requires a numeric `manifest.version` (`1.0.4`). The user-facing prerelea
 **Configuration sharing (v1.0.4-beta):** Expand Configuration sharing, select Token (compact) or JSON (readable), and Export & copy. Import automatically recognizes either format. Download JSON creates a local `auto-type-config.json` backup; Open JSON file loads it for review before clicking Import. Both formats include only typing settings, not drafts or document information. Full JSON exports use `{"schemaVersion":1,"settings":{...}}`; imports also accept a flat settings object (for example `{"advancedMode":true,"cpm":450}`). Missing fields use frozen version 1 defaults, unknown/invalid fields are rejected, and successful imports replace settings for the next session. The iframe edition adjusts unsupported CDP modes. No new permissions or server needed.
 
 The v1.0.4-beta popup fixes the logo alignment: the green period now stays inside the `at.` badge. This is a UI-only change.
-\n## Editions
+\n**Safety notice for current source:** CDP mode skips automatic typo-and-Backspace correction to prevent a queued destructive key reaching a different Docs iframe document. Normal typing and optional intentional typos remain available. The iframe transport retains its correction behavior. This source fix is not yet included in existing release downloads.
+
+## Editions
 
 | | iframe | Hybrid |
 | --- | --- | --- |
