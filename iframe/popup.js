@@ -350,7 +350,7 @@ function renderStatus(status) {
     return;
   }
   const cleaning = !currentReadyToStart && ["stopped", "done", "error"].includes(state);
-  setMessage((messages[state] || "Ready") + (cleaning ? " · Cleaning up…" : ""),
+  setMessage((messages[state] || "Ready") + (status.notice && ["running","done"].includes(state) ? " · " + status.notice : "") + (cleaning ? " · Cleaning up…" : ""),
     state === "error" ? "error" : state === "done" && !cleaning ? "ok" : "idle");
 }
 
@@ -575,7 +575,7 @@ async function controlTask(type) {
   finally {
     controlPending = false;
     const active = ["paused", "running"].includes(currentState);
-    $("pause").disabled = !active;
+    $("pause").disabled = !active || $("pause").textContent === "Restoring…";
     $("stop").disabled = !active;
     syncStartButton();
   }

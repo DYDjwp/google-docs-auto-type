@@ -100,3 +100,75 @@ for(const edition of ["iframe","hybrid"]){
     assert.deepEqual(reply,{id:7,ok:true,selection:{start:3,end:9}});
   });
 }
+
+function modelBridge(edition,{ignoreTypo=false,ignoreRestore=false,available=true}={}){
+  let request;
+  const buffer={text:"HELLO WORLD",start:5,end:5};
+  const edits=[], replies=new Map(), requests=new Map();
+  const target={dispatchEvent:e=>{
+    if(e.type!=="keypress")return;
+    edits.push(e.key);
+    if(ignoreTypo&&e.key==="s")return;
+    buffer.text=buffer.text.slice(0,buffer.start)+e.key+buffer.text.slice(buffer.end);
+    buffer.start+=e.key.length;buffer.end=buffer.start;
+  }};
+  const frame={contentDocument:{activeElement:target,body:{},querySelector:()=>target}};
+  const document={querySelector:()=>frame,addEventListener:(type,fn)=>request=fn,
+    dispatchEvent:e=>{const response=JSON.parse(e.detail);replies.set(response.id,response);requests.get(response.id)?.(response);}};
+  const window=available?{_docs_annotate_canvas_by_ext:"existing-authorized-flag",location:{pathname:"/document/d/one/edit"},
+    _docs_annotate_getAnnotatedText:async()=>({
+      getText:()=>buffer.text,getSelection:()=>[{start:buffer.start,end:buffer.end}],
+      setSelection:(start,end)=>{if(!ignoreRestore){buffer.start=start;buffer.end=end;}}
+    })}:{};
+  class E{constructor(type,opts){this.type=type;this.detail=opts?.detail;}}
+  vm.runInNewContext(read(edition+"/main-bridge.js"),{document,window,Event:E,CustomEvent:E,setTimeout,clearTimeout});
+  let id=0;
+  return {buffer,edits,send(action,extra={}){const n=++id;return new Promise(resolve=>{
+    requests.set(n,resolve);request({detail:JSON.stringify({id:n,action,sessionId:"task",...extra})});
+  });}};
+}
+for(const edition of ["iframe","hybrid"]){
+  test(edition+" bridge restores selection with setSelection and readback",async()=>{
+    const h=modelBridge(edition);
+    h.buffer.start=h.buffer.end=1;
+    const result=await h.send("restoreSelection",{selection:{start:5,end:5}});
+    assert.equal(result.restored,true);
+    assert.equal(h.buffer.start,5);
+    assert.equal(h.buffer.text,"HELLO WORLD");
+  });
+  test(edition+" failed restore does not claim success",async()=>{
+    const h=modelBridge(edition,{ignoreRestore:true});
+    h.buffer.start=h.buffer.end=1;
+    assert.equal((await h.send("restoreSelection",{selection:{start:5,end:5}})).restored,false);
+    assert.equal(h.buffer.start,1);
+  });
+  test(edition+" model-confirmed correction replaces only temporary typo",async()=>{
+    const h=modelBridge(edition);
+    const result=await h.send("correct",{wrong:"s",correct:"a",delay:0});
+    assert.equal(result.corrected,true);
+    assert.equal(h.buffer.text,"HELLOa WORLD");
+    assert.deepEqual(h.edits,["s","a"]);
+    assert.deepEqual(result.selection,{start:6,end:6});
+  });
+  test(edition+" ignored temporary typo is never followed by a replacement",async()=>{
+    const h=modelBridge(edition,{ignoreTypo:true});
+    assert.equal((await h.send("correct",{wrong:"s",correct:"a",delay:0})).corrected,false);
+    assert.equal(h.buffer.text,"HELLO WORLD");
+    assert.deepEqual(h.edits,["s"]);
+  });
+  test(edition+" cancel during correction delay prevents replacement",async()=>{
+    const h=modelBridge(edition);
+    const pending=h.send("correct",{wrong:"s",correct:"a",delay:150});
+    await flush();
+    assert.equal(h.buffer.text,"HELLOs WORLD");
+    await h.send("cancelOperation");
+    assert.equal((await pending).corrected,false);
+    assert.deepEqual(h.edits,["s"]);
+    assert.equal(h.buffer.text,"HELLOs WORLD");
+  });
+  test(edition+" unavailable model skips correction before inserting typo",async()=>{
+    const h=modelBridge(edition,{available:false});
+    assert.equal((await h.send("correct",{wrong:"s",correct:"a",delay:0})).skipped,true);
+    assert.deepEqual(h.edits,[]);
+  });
+}

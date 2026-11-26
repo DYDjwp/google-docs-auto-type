@@ -56,7 +56,7 @@
     if (!job) return {state: "idle", index: 0, total: 0, mode: "", error: "", readyToStart: true};
     return {
       state: job.state, index: job.index, total: job.chars.length,
-      mode: job.mode, error: job.error || "", pauseReason: job.pauseReason || "", manualResume: job.state === "paused" && !job.bookmark, restoring: !!job.restoring,
+      mode: job.mode, error: job.error || "", pauseReason: job.pauseReason || "", notice: job.notice || "", manualResume: job.state === "paused" && !job.bookmark, restoring: !!job.restoring,
       // "stopped", "done" and "error" may be reported while asynchronous
       // waits, debugger detach, and event-listener cleanup remain in flight.
       // Only a finalized task can safely be replaced with a new task.
@@ -306,7 +306,7 @@
       error: `Error: ${status.error || "typing failed"}`,
       idle: "Ready"
     };
-    overlay.status.textContent = labels[status.state] || "preparing";
+    overlay.status.textContent = (labels[status.state] || "preparing") + (status.notice && ["running","done"].includes(status.state) ? " · " + status.notice : "");
     overlay.fill.style.width = `${progress}%`;
     overlay.toggle.textContent = status.restoring ? "Restoring…" : status.state === "paused" ? (status.manualResume ? "Resume manually" : "Resume") : "Pause";
     overlay.toggle.disabled = status.restoring || !["paused", "running"].includes(status.state);
@@ -404,7 +404,7 @@
         if (gesture !== g || closed) return;
         g.before = before;
         g.beforeReady = true;
-        if (before && g.reliable) task.bookmark = before;
+        if (before && g.reliable) {task.bookmark = before; task.selectionAvailable = true;}
         if (!before) { pause("Document caret may have moved"); clearGesture(g); }
       });
     };
@@ -539,8 +539,13 @@
         task.mode = "CDP";
       }
     }
-    // A pause/stop can arrive while the iframe failure is being returned.
-    if (task.state === "paused") await pauseAwareWait(task, 0);
+    // A pause may arrive while an explicit pre-dispatch iframe failure
+    // is being returned. Do not hold the in-flight flag across Resume.
+    if (task.state === "paused") {
+      task.sending = false;
+      await pauseAwareWait(task,0);
+      return isActive(task) ? await sendCharacter(task,character) : false;
+    }
     if (!isActive(task)) return false;
     const info = frameTarget();
     if (info) focusFrame(info);
@@ -607,6 +612,7 @@
         activate();
       } catch {
         if (job === task && task.state === "paused") {
+          void bridgeRequest("cancelOperation",{sessionId:task.sessionId},300).catch(()=>{});
           task.bookmark = null;
           task.pauseReason = "Automatic caret restoration failed. Restore manually, then Resume.";
         }
@@ -636,7 +642,10 @@
         task.bookmark = validSelection(result.selection) ? result.selection : null;
         return true;
       }
-      if (result.skipped && isActive(task)) return false;
+      if (result.skipped && isActive(task)) {
+        task.notice = "Fix typo skipped: model verification unavailable";
+        return false;
+      }
       if (isActive(task)) stop("Correction not confirmed. Check the document before restarting.");
       return null;
     } catch {
@@ -664,6 +673,8 @@
         const initial = await readSelection();
         if (task.state === "running") {task.bookmark = initial; task.selectionAvailable = !!initial;}
       }
+      if (task.options.fixTypo && (!task.selectionAvailable || task.mode !== "iframe"))
+        task.notice = "Fix typo unavailable in this input mode or document";
       if (task.options.showOverlay) ensureOverlay();
       else if (overlay?.host?.isConnected) overlay.host.remove();
       updateOverlay();
@@ -781,7 +792,7 @@
     localWaitFallback = false;
     nextBackgroundProbeAt = 0;
     job = {
-      chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, index: 0, state: "running", pauseReason: "", options, mode: "", error: "", sinceRest: 0,
+      chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, index: 0, state: "running", pauseReason: "", notice: "", options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
       guard: null, sending: false, bookmark: null, selectionAvailable: false, correcting: false, restoring: false
     };

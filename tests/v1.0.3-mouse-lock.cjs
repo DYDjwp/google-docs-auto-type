@@ -51,7 +51,7 @@ function event(type, {trusted = true, buttons = 0, path = [], key = "", movement
 function makeHarness({
   edition = "iframe", advancedMode = true, mouseLock = true,
   showOverlay = false, startDelay = 1, failWait = false,
-  keyboardLock = false, fixTypo = false, blockWaits = 1, selection = null
+  keyboardLock = false, fixTypo = false, blockWaits = 1, selection = null, holdCorrection = false, holdRestore = false, restoreFails = false
 } = {}) {
   const window = new FakeTarget();
   const document = new FakeTarget();
@@ -66,8 +66,8 @@ function makeHarness({
   const intervals = new Map();
   const logs = [];
   let overlayHost = null, overlayButtons = null;
-  const edits = [];
-  let currentSelection = selection;
+  const edits = [], requests = [];
+  let currentSelection = selection, correctionReply = null, restoreReply = null;
   const rand = Object.create(Math);
   rand.random = () => 0;
 
@@ -95,6 +95,17 @@ function makeHarness({
   document.dispatchEvent = payload => {
     if (payload.type === "__auto_type_main_request_v3__") {
       const request = JSON.parse(payload.detail);
+      requests.push(request);
+      const reply = extra => document.dispatchEvent({type:"__auto_type_main_response_v3__",detail:JSON.stringify({id:request.id,ok:true,...extra})});
+      if (request.action === "correct" && holdCorrection) {
+        correctionReply = () => reply({corrected:false});
+        return true;
+      }
+      if (request.action === "cancelOperation" && correctionReply) {correctionReply();correctionReply=null;}
+      if (request.action === "restoreSelection" && holdRestore) {
+        restoreReply = () => {if(!restoreFails)currentSelection=request.selection;reply({restored:!restoreFails});};
+        return true;
+      }
       if (["type", "backspace", "enter"].includes(request.action)) {
         edits.push(request);
         if (currentSelection) {const at=currentSelection.start+(request.char?.length || 1);currentSelection={start:at,end:at};}
@@ -144,7 +155,10 @@ function makeHarness({
   const options = {advancedMode, mouseLock, showOverlay, keyboardLock,
     startDelay, speed:"fast", mode:"iframe", fixTypo, fixChance:35, fixPauseMs:400, jitter:0, rest:false};
   return {
-    window, document, innerWindow, innerDoc, send, options, logs, edits,
+    window, document, innerWindow, innerDoc, send, options, logs, edits, requests,
+    get currentSelection(){return currentSelection;},
+    get correcting(){return !!correctionReply;},
+    releaseRestore(){assert.ok(restoreReply);restoreReply();restoreReply=null;},
     setSelection(value) {currentSelection = value;},
     get overlayHost() {return overlayHost;},
     get overlayButtons() {return overlayButtons;},
@@ -381,7 +395,7 @@ for (const edition of ["iframe","hybrid"]) {
       await new Promise(r=>setTimeout(r,120));await flush();
       assert.equal(h.send("AT_PAGE_STATUS").status.state,moved?"paused":"done");
       assert.equal(h.edits.length,moved?1:2);
-      if(moved){h.send("AT_PAGE_RESUME");await flush();await h.finish();}
+      if(moved){h.send("AT_PAGE_RESUME");await flush();assert.deepEqual(h.currentSelection,{start:6,end:6});await h.finish();}
       assert.deepEqual(h.edits.map(e=>e.char),["a","b"]);
     });
   }
@@ -417,5 +431,59 @@ for (const edition of ["iframe","hybrid"]) {
     h.send("AT_PAGE_STOP");
     await h.finish();
     assert.deepEqual(h.edits.map(e=>e.char),["a","b"]);
+  });
+}
+
+for(const edition of ["iframe","hybrid"]){
+  test(edition+" click-only transparent overlay hit tests the page and pauses",async()=>{
+    const h=makeHarness({edition,mouseLock:false,startDelay:0});
+    await h.start("ab");
+    h.document.elementFromPoint=()=>({closest:s=>s.includes(".kix-page")?{}:null});
+    const click=event("click");
+    click.clientX=200;click.clientY=300;
+    h.document.dispatchEvent(click);
+    await flush();
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+    assert.equal(h.edits.length,1);
+    h.send("AT_PAGE_STOP");await h.finish();
+  });
+  for(const restoreFails of [false,true]){
+    test(edition+" Resume awaits logical caret restoration (failure="+restoreFails+")",async()=>{
+      const h=makeHarness({edition,mouseLock:false,startDelay:0,selection:{start:5,end:5},holdRestore:true,restoreFails});
+      await h.start("ab");
+      h.send("AT_PAGE_PAUSE");
+      h.setSelection({start:1,end:1});
+      h.send("AT_PAGE_RESUME");
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+      assert.equal(h.send("AT_PAGE_STATUS").status.restoring,true);
+      assert.equal(h.edits.length,1);
+      const restore=h.requests.find(x=>x.action==="restoreSelection");
+      assert.deepEqual(restore.selection,{start:6,end:6});
+      h.releaseRestore();await flush();
+      if(restoreFails){
+        assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+        assert.equal(h.send("AT_PAGE_STATUS").status.manualResume,true);
+        assert.equal(h.edits.length,1);
+        h.send("AT_PAGE_STOP");
+      } else {
+        assert.equal(h.currentSelection.start,6);
+        assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
+      }
+      await h.finish();
+      assert.equal(h.edits.length,restoreFails?1:2);
+    });
+  }
+  test(edition+" pause during correction cancels task and notifies user",async()=>{
+    const h=makeHarness({edition,mouseLock:false,startDelay:0,selection:{start:5,end:5},fixTypo:true,holdCorrection:true});
+    assert.equal(h.send("AT_PAGE_START",{text:"ab",options:h.options}).ok,true);
+    for(let i=0;i<30&&!h.correcting;i++)await flush(1);
+    assert.ok(h.correcting);
+    h.document.dispatchEvent(event("click",{editor:true}));
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"stopped");
+    assert.match(h.send("AT_PAGE_STATUS").status.error,/Correction interrupted/);
+    await h.finish();
+    assert.equal(h.send("AT_PAGE_STATUS").status.index,0);
+    assert.ok(h.requests.some(r=>r.action==="cancelOperation"));
+    assert.equal(h.edits.length,0);
   });
 }

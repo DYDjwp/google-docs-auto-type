@@ -25,6 +25,10 @@ function target() {
 function harness({keyboardLock=false}={}) {
   const document=target();
   document.documentElement={nodeType:1};
+  document.addEventListener("__auto_type_main_request_v3__",event=>{
+    const request=JSON.parse(event.detail);
+    queueMicrotask(()=>document.dispatchEvent({type:"__auto_type_main_response_v3__",detail:JSON.stringify({id:request.id,ok:true,selection:null})}));
+  });
   const observers=new Set();
   let onMessage, firstInsert=null, firstInsertQueued=false, loadEvents=0;
   const messages=[];
