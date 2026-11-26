@@ -472,7 +472,7 @@ for (const button of document.querySelectorAll(".speed")) {
 }
 for (const key of FIELDS) {
   $(key).addEventListener("change", async () => {
-    if (!configReady || configBusy) return;
+    if (!configReady || configBusy || ["fixChance", "fixPauseMs"].includes(key)) return;
     options[key] = sanitize(key, $(key).value);
     renderOptions();
     await persist();
@@ -564,7 +564,10 @@ async function controlTask(type) {
     const result = await pageMessage(type);
     if (!result?.ok) throw new Error(result?.error || "Could not control task");
     renderStatus(result.status);
-  } catch (e) { setMessage(e.message, "error"); }
+  } catch (e) {
+    currentReadyToStart = false;
+    setMessage(e.message, "error");
+  }
   finally {
     controlPending = false;
     const active = ["paused", "running"].includes(currentState);

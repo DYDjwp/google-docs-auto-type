@@ -512,7 +512,7 @@
   function syncInputProtection(task) {
     const snapshot = correctionFrameSnapshot();
     if (!snapshot.accessible && (task.options.keyboardLock ||
-        task.options.mouseLock || task.options.fixTypo))
+        task.options.mouseLock || task.verifiedCorrection))
       throw new Error("Editor input iframe is inaccessible; input protection cannot be verified");
     task.syncMouseFrame?.(snapshot);
     task.syncKeyboardFrame?.(snapshot);
@@ -858,9 +858,6 @@
   }
 
   function start(message) {
-    const currentDoc = /^https:\/\/docs\.google\.com\/document\/(?:u\/\d+\/)?d\/([^/?#]+)/.exec(globalThis.location?.href || "")?.[1];
-    if (message.documentId && currentDoc !== undefined && currentDoc !== message.documentId)
-      return {ok:false,error:"Document changed; reopen Auto Type"};
     if (job && ["running", "paused"].includes(job.state))
       return {ok: false, error: "A typing session is already running. Stop it first."};
     if (job && !job.finalized)
@@ -888,6 +885,11 @@
 
   chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (!message || !String(message.type || "").startsWith("AT_PAGE_")) return false;
+    const currentDoc = /^https:\/\/docs\.google\.com\/document\/(?:u\/\d+\/)?d\/([^/?#]+)/.exec(globalThis.location?.href || "")?.[1];
+    if (message.documentId && globalThis.location && currentDoc !== message.documentId) {
+      respond({ok:false,error:"Document changed; reopen Auto Type"});
+      return false;
+    }
     switch (message.type) {
       case "AT_PAGE_STATUS": respond({ok: true, status: getStatus()}); break;
       case "AT_PAGE_CDP_VALIDATE":
