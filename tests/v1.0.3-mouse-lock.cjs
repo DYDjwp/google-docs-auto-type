@@ -32,12 +32,12 @@ class FakeTarget {
   }
 }
 
-function event(type, {trusted = true, buttons = 0, path = [], key = ""} = {}) {
+function event(type, {trusted = true, buttons = 0, path = [], key = "", movementX = 0, movementY = 0} = {}) {
   return {
     type,
     isTrusted: trusted,
     buttons,
-    key,
+    key, movementX, movementY,
     cancelable: true,
     defaultPrevented: false,
     stopped: false,
@@ -96,7 +96,7 @@ function makeHarness({
       if (["type", "backspace", "enter"].includes(request.action)) edits.push(request);
       queueMicrotask(() => document.dispatchEvent({
         type: "__auto_type_main_response_v3__",
-        detail: JSON.stringify({id: request.id, ok: true, verifiedCorrection:true})
+        detail: JSON.stringify({id: request.id, ok: true})
       }));
     }
     return realDispatch(payload);
@@ -191,7 +191,7 @@ for (const edition of ["iframe","hybrid"]) {
       assert.equal(hover.defaultPrevented,false,"ordinary pointer movement stays possible");
       const drag=event("mousemove",{buttons:1});
       target.dispatchEvent(drag);
-      assert.equal(drag.defaultPrevented,true,"dragging while a button is down is blocked");
+      assert.equal(drag.defaultPrevented,false,"zero-delta movement does not pause or block");
       const synthetic=event("click",{trusted:false});
       target.dispatchEvent(synthetic);
       assert.equal(synthetic.defaultPrevented,false,"programmatic events stay untouched");
@@ -228,11 +228,12 @@ for (const edition of ["iframe","hybrid"]) {
     for(const settings of [{advancedMode:false,mouseLock:true},{advancedMode:true,mouseLock:false}]) {
       const h=makeHarness({edition,...settings});
       await h.start();
-      assert.equal(h.window.count("pointerdown"),0);
-      assert.equal(h.document.count("wheel"),0);
+      assert.equal(h.window.count("pointerdown"),1);
+      assert.equal(h.document.count("wheel"),1);
       const click=event("click");
       h.document.dispatchEvent(click);
       assert.equal(click.defaultPrevented,false);
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
       h.send("AT_PAGE_STOP");
       await h.finish();
     }
@@ -243,7 +244,7 @@ for (const edition of ["iframe","hybrid"]) {
     await h.start();
     const {oldDoc,newDoc,newWindow}=h.replaceFrame();
     h.pollFrames();
-    assert.equal(oldDoc.count("wheel"),1);
+    assert.equal(oldDoc.count("wheel"),0);
     assert.equal(newDoc.count("wheel"),1);
     assert.equal(newWindow.count("wheel"),1);
     const attemptedClick=event("click");
@@ -337,106 +338,55 @@ test("review: floating button mousedown preserves editor focus",async()=>{
   await h.finish();
 });
 
-for (const edition of ["iframe", "hybrid"]) {
-  test(edition + ": keyboard lock consumes manual keys before correction safety guard", async () => {
-    const h = makeHarness({edition, keyboardLock:true, fixTypo:true, startDelay:0});
-    await h.start("a");
-    assert.deepEqual(h.edits.map(e=>e.action),["type"]);
-    for (const target of [h.document, h.innerDoc]) {
-      const key = event("keydown",{key:"x"});
-      target.dispatchEvent(key);
-      assert.equal(key.defaultPrevented,true);
-      assert.equal(key.stopped,true);
+for (const edition of ["iframe","hybrid"]) {
+  for (const mouseLock of [false,true]) {
+    test(edition+" real mouse movement pauses even with mouseLock="+mouseLock,async()=>{
+      const h=makeHarness({edition,mouseLock,startDelay:0});
+      await h.start("ab");
+      assert.equal(h.edits[0].char,"a");
+      h.innerDoc.dispatchEvent(event("mousemove",{trusted:false,movementX:8}));
+      h.innerDoc.dispatchEvent(event("mousemove"));
       assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
+      h.innerDoc.dispatchEvent(event("pointermove",{movementX:1}));
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+      assert.equal(h.send("AT_PAGE_STATUS").status.pauseReason,"Mouse moved");
+      assert.equal(h.edits.length,1);
+      assert.equal(h.innerDoc.count("keydown"),0);
+      h.send("AT_PAGE_RESUME");
+      await h.finish();
+      assert.deepEqual(h.edits.map(e=>e.char),["a","b"]);
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
+    });
+  }
+  test(edition+" unlocked keyboard activity pauses; enabled keyboard lock consumes keys",async()=>{
+    for (const keyboardLock of [false,true]) {
+      const h=makeHarness({edition,keyboardLock,startDelay:0});
+      await h.start("ab");
+      const e=event("keydown",{key:"ArrowLeft"});
+      h.innerDoc.dispatchEvent(e);
+      assert.equal(e.defaultPrevented,keyboardLock);
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,keyboardLock?"running":"paused");
+      if(keyboardLock){
+        h.innerDoc.dispatchEvent(event("keydown",{key:"Escape"}));
+        assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+      }
+      h.send("AT_PAGE_STOP");
+      await h.finish();
+      assert.deepEqual(h.edits.map(e=>e.char),["a"]);
     }
-    await h.finish();
-    assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
-    assert.equal(h.send("AT_PAGE_STATUS").status.index,1);
-    assert.deepEqual(h.edits.map(e=>e.action),["type","backspace","type"]);
   });
-
-  test(edition + ": Escape pauses, consumes the key, and does not delete pending typo", async () => {
-    const h = makeHarness({edition, keyboardLock:true, fixTypo:true, startDelay:0});
-    await h.start("a");
-    const esc = event("keydown",{key:"Escape"});
-    h.document.dispatchEvent(esc);
-    assert.equal(esc.defaultPrevented,true);
-    assert.equal(esc.stopped,true);
+  test(edition+" frame replacement rebinds guard before next input and leaves no old listeners",async()=>{
+    const h=makeHarness({edition,startDelay:0,blockWaits:2});
+    await h.start("abc");
+    const {oldDoc,newDoc}=h.replaceFrame();
+    h.release();
+    await h.waitForPacing();
+    assert.equal(oldDoc.count("pointermove"),0);
+    assert.equal(newDoc.count("pointermove"),1);
+    newDoc.dispatchEvent(event("pointermove",{movementY:2}));
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
     h.send("AT_PAGE_STOP");
     await h.finish();
-    assert.deepEqual(h.edits.map(e=>e.action),["type"]);
+    assert.deepEqual(h.edits.map(e=>e.char),["a","b"]);
   });
-
-  for (const mouseLock of [false,true]) {
-    for (const [button,expected] of [["#close","running"],["#toggle","paused"],["#stop","stopped"]]) {
-      test(edition + ": correction panel " + button + " obeys its own handler (mouseLock=" + mouseLock + ")", async () => {
-        const h=makeHarness({edition,mouseLock,showOverlay:true,fixTypo:true,startDelay:0});
-        await h.start("a");
-        const host=h.overlayHost;
-        for(const type of ["pointerdown","mousedown"]) {
-          const e=event(type,{path:[host,h.document,h.window]});
-          h.window.dispatchEvent(e);
-          h.document.dispatchEvent(e);
-          assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
-          assert.equal(e.stopped,false);
-        }
-        h.overlayButtons.get(button).dispatchEvent(event("click"));
-        assert.equal(h.send("AT_PAGE_STATUS").status.state,expected);
-        if(button==="#close"){
-          assert.equal(host.isConnected,false);
-          await h.finish();
-          assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
-          assert.deepEqual(h.edits.map(e=>e.action),["type","backspace","type"]);
-        } else {
-          if(expected==="paused")h.send("AT_PAGE_STOP");
-          await h.finish();
-          assert.deepEqual(h.edits.map(e=>e.action),["type"]);
-        }
-      });
-    }
-  }
-}
-
-for (const edition of ["iframe","hybrid"]) {
-  test(edition + ": correction refuses Backspace after editor iframe replacement", async () => {
-    const h=makeHarness({edition,fixTypo:true,startDelay:0});
-    await h.start("a");
-    assert.deepEqual(h.edits.map(e=>e.action),["type"]);
-    h.replaceFrame();
-    h.pollFrames();
-    await h.finish();
-    const status=h.send("AT_PAGE_STATUS").status;
-    assert.equal(status.state,"stopped");
-    assert.equal(status.index,0);
-    assert.deepEqual(h.edits.map(e=>e.action),["type"]);
-  });
-}
-
-for(const edition of ["iframe","hybrid"]) {
-  for(const keyboardLock of [true,false]) {
-    test(edition + ": new iframe is protected before correction without any polling (keyboard=" + keyboardLock + ")", async()=>{
-      const h=makeHarness({edition,keyboardLock,fixTypo:true,startDelay:0,blockWaits:2});
-      // One ordinary character delay fits in a single pacing slice.
-      h.options.cpm=1800;
-      await h.start("1a");
-      assert.equal(h.edits[0].char,"1");
-      const {newDoc}=h.replaceFrame();
-      // No pollFrames call: release ordinary pacing and reach the typo wait.
-      h.release();
-      await h.waitForPacing();
-      assert.equal(h.edits.length,2);
-      assert.equal(h.edits[1].action,"type");
-      for(let i=0;i<2;i++){
-        const key=event("keydown",{key:"ArrowLeft"});
-        newDoc.dispatchEvent(key);
-        if(keyboardLock) assert.equal(key.defaultPrevented,true);
-      }
-      await h.finish();
-      const status=h.send("AT_PAGE_STATUS").status;
-      assert.equal(status.state,keyboardLock?"done":"stopped");
-      assert.equal(h.edits.filter(e=>e.action==="backspace").length,keyboardLock?1:0);
-      assert.equal(status.index,keyboardLock?2:1);
-    });
-  }
 }

@@ -336,7 +336,7 @@ function renderStatus(status) {
   const messages = {
     idle: "Ready · Text will be typed into the current Google Doc",
     running: `Typing ${index}/${total} · ${mode || "preparing"}`,
-    paused: `Paused at ${index}/${total}`,
+    paused: `Paused at ${index}/${total}${status.pauseReason ? " · " + status.pauseReason : ""}`,
     done: `Sent ${total} characters · Please verify the document`,
     stopped: `Stopped at ${index}/${total}${error ? " · " + error : ""}`,
     error: `Error: ${error}`

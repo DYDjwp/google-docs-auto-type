@@ -337,15 +337,15 @@ test("both extension editions share the same CDP guard and popup alert",()=>{
   }
 });
 
-test("review: ambiguous iframe Backspace is never repeated via CDP",async()=>{
+test("review: legacy correction preference never issues iframe or CDP Backspace",async()=>{
   const h=makeCdpHarness({uncertainBackspace:true});
   h.send("AT_PAGE_START",{text:"a",options:h.options});
   await h.waitForFinish();
   const status=h.send("AT_PAGE_STATUS").status;
-  assert.equal(status.state,"error");
-  assert.equal(status.index,0);
-  assert.equal(h.buffer.text,"HELLO");
-  assert.deepEqual(h.backspaces,[6]);
+  assert.equal(status.state,"done");
+  assert.equal(status.index,1);
+  assert.equal(h.buffer.text,"HELLOa");
+  assert.deepEqual(h.backspaces,[]);
   assert.equal(h.trustedKeydowns,0);
 });
 

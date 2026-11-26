@@ -10,7 +10,7 @@ const flush = async (n = 8) => {
   for (let i = 0; i < n; i++) await new Promise(resolve => setImmediate(resolve));
 };
 
-function typingHarness({pauseAtTypo = true, verifiedCorrection = true} = {}) {
+function typingHarness({pauseAtTypo = true, verifiedCorrection = false} = {}) {
   const watchers = new Map();
   const buffer = {text: "HELLO", caret: 5};
   const inserted = [];
@@ -92,8 +92,8 @@ function typingHarness({pauseAtTypo = true, verifiedCorrection = true} = {}) {
     release() {assert.ok(blockedWait); const resolve = blockedWait; blockedWait = null; resolve();},
     async waitForTemp() {
       for (let i = 0; i < 25 && !blockedWait; i++) await flush(1);
-      assert.equal(buffer.text, "HELLOs");
-      assert.ok(blockedWait, "must be waiting between temporary typo and Backspace");
+      assert.equal(buffer.text, "HELLOa");
+      assert.ok(blockedWait, "must be waiting between characters");
     },
     fireTrusted(type) {
       document.dispatchEvent({type, isTrusted: true});
@@ -101,71 +101,38 @@ function typingHarness({pauseAtTypo = true, verifiedCorrection = true} = {}) {
   };
 }
 
-test("P1/P3: cancel during typo correction does not backspace original text or inflate progress", async () => {
-  const h = typingHarness();
-  h.send("AT_PAGE_START", {text: "a", options: h.options});
+test("stop after first character never deletes original text or advances unsent progress",async()=>{
+  const h=typingHarness();
+  h.send("AT_PAGE_START",{text:"ab",options:h.options});
   await h.waitForTemp();
-  h.buffer.caret = 0; // User moved the caret to before H.
-  assert.equal(h.send("AT_PAGE_STOP").status.state, "stopped");
-  h.release();
-  await flush();
-  const status = h.send("AT_PAGE_STATUS").status;
-  assert.equal(h.buffer.text, "HELLOs", "existing H must never be deleted");
-  assert.deepEqual(h.backspaces, [], "no unsafe Backspace");
-  assert.equal(status.index, 0, "unsent correct character must not count");
-  assert.match(status.error, /temporary typo may remain/);
-});
-
-test("P1: pausing before cancelling never deletes text at a changed cursor", async () => {
-  const h = typingHarness();
-  h.send("AT_PAGE_START", {text: "a", options: h.options});
-  await h.waitForTemp();
-  h.send("AT_PAGE_PAUSE");
-  h.buffer.caret = 0;
+  h.buffer.caret=0;
   h.send("AT_PAGE_STOP");
   h.release();
   await flush();
-  assert.deepEqual(h.backspaces, []);
-  assert.equal(h.buffer.text, "HELLOs");
-  assert.equal(h.send("AT_PAGE_STATUS").status.index, 0);
+  assert.equal(h.buffer.text,"HELLOa");
+  assert.deepEqual(h.backspaces,[]);
+  assert.equal(h.send("AT_PAGE_STATUS").status.index,1);
 });
 
-test("P1: trusted mouse action while typo exists stops instead of backspacing", async () => {
-  const h = typingHarness();
-  h.send("AT_PAGE_START", {text: "a", options: h.options});
+test("mouse interaction pauses without destructive correction",async()=>{
+  const h=typingHarness();
+  h.send("AT_PAGE_START",{text:"ab",options:h.options});
   await h.waitForTemp();
-  h.buffer.caret = 0;
   h.fireTrusted("pointerdown");
-  h.release();
-  await flush();
-  assert.equal(h.buffer.text, "HELLOs");
-  assert.deepEqual(h.backspaces, []);
-  assert.equal(h.send("AT_PAGE_STATUS").status.state, "stopped");
+  assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+  h.send("AT_PAGE_STOP");h.release();await flush();
+  assert.equal(h.buffer.text,"HELLOa");
+  assert.deepEqual(h.backspaces,[]);
 });
 
-test("P1: pausing and resuming a pending correction stops rather than deleting at moved caret", async () => {
-  const h = typingHarness();
-  h.send("AT_PAGE_START", {text: "a", options: h.options});
-  await h.waitForTemp();
-  h.send("AT_PAGE_PAUSE");
-  h.buffer.caret = 0;
-  h.send("AT_PAGE_RESUME");
-  h.release();
+test("even a claimed verification capability cannot enable removed correction path",async()=>{
+  const h=typingHarness({pauseAtTypo:false,verifiedCorrection:true});
+  h.send("AT_PAGE_START",{text:"a",options:h.options});
   await flush();
-  assert.equal(h.buffer.text, "HELLOs");
-  assert.deepEqual(h.backspaces, []);
-  assert.equal(h.send("AT_PAGE_STATUS").status.state, "stopped");
-  assert.equal(h.send("AT_PAGE_STATUS").status.index, 0);
-});
-
-test("P3: successful correction restores intended character and advances progress once", async () => {
-  const h = typingHarness({pauseAtTypo: false});
-  h.send("AT_PAGE_START", {text: "a", options: h.options});
-  for (let i = 0; i < 30 && h.send("AT_PAGE_STATUS").status.state !== "done"; i++) await flush(1);
-  assert.equal(h.buffer.text, "HELLOa");
-  assert.deepEqual(h.backspaces, [6]);
-  assert.equal(h.send("AT_PAGE_STATUS").status.index, 1);
-  assert.equal(h.send("AT_PAGE_STATUS").status.state, "done");
+  assert.equal(h.buffer.text,"HELLOa");
+  assert.deepEqual(h.backspaces,[]);
+  assert.equal(h.send("AT_PAGE_STATUS").status.index,1);
+  assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
 });
 
 function popupHarness({failAlways = false} = {}) {

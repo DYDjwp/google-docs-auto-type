@@ -1,5 +1,7 @@
 # Auto Type
 
+**Automatic pause:** Moving the mouse inside the Docs page or manually interacting with an unlocked editor pauses the task. Synthetic input and extension controls do not trigger this guard. Resume continues with the next unsent character at the current insertion point; review the document first. One already-dispatched input may finish. No collaborative-edit tracking or full-text verification is performed.
+
 Auto Type is a Chrome extension for entering text into Google Docs at a configurable pace. It works with an editable document already open in the browser and uses Google Docs' internal text-input iframe to dispatch typing events.
 
 The project is distributed in two editions. Both use the same interface and typing controls; the Hybrid edition adds Chrome DevTools Protocol (CDP) as an alternative input method.

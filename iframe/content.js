@@ -6,8 +6,6 @@
   const HAS_CDP = chrome.runtime.getManifest().permissions.includes("debugger");
   let job = null;
   let overlay = null;
-  let keyboardLockController = null;
-  let mouseLockController = null;
   const PRESETS = {slow: 180, medium: 300, fast: 520};
   const NEIGHBORS = {
     a:"sqwz", b:"vghn", c:"xdfv", d:"sferxc", e:"wrsd", f:"drtgvc", g:"ftyhbv",
@@ -17,7 +15,7 @@
   };
   const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || min));
   const randomInt = (min, max) => Math.round(min + Math.random() * Math.max(0, max - min));
-  const isActive = task => !task.stopped && job === task;
+  const isActive = task => job === task && ["running", "paused"].includes(task.state);
 
   function normalize(options) {
     const o = options || {};
@@ -40,10 +38,8 @@
       startDelay: clamp(o.startDelay ?? 1, 0, 15),
       mode: HAS_CDP && ["auto", "iframe", "cdp"].includes(o.mode) ? o.mode : "iframe",
       enterStrategy: ["keydown", "keypress", "both"].includes(o.enterStrategy) ? o.enterStrategy : "keydown",
-      typo: Boolean(o.typo), fixTypo: Boolean(o.fixTypo), deepRest: Boolean(o.deepRest),
+      typo: Boolean(o.typo), deepRest: Boolean(o.deepRest),
       typoChance: clamp(o.typoChance ?? 1.5, 0, 35),
-      fixChance: clamp(o.fixChance ?? 3, 0, 35),
-      fixPauseMs: clamp(o.fixPauseMs ?? 400, 0, 3000),
       deepRestAt: ["word", "sentence", "both"].includes(o.deepRestAt) ? o.deepRestAt : "both",
       deepChance: clamp(o.deepChance ?? 14, 0, 100),
       deepMinMs: clamp(o.deepMinMs ?? 1300, 0, 120000),
@@ -58,7 +54,7 @@
     if (!job) return {state: "idle", index: 0, total: 0, mode: "", error: "", readyToStart: true};
     return {
       state: job.state, index: job.index, total: job.chars.length,
-      mode: job.mode, error: job.error || "",
+      mode: job.mode, error: job.error || "", pauseReason: job.pauseReason || "",
       // "stopped", "done" and "error" may be reported while asynchronous
       // waits, debugger detach, and event-listener cleanup remain in flight.
       // Only a finalized task can safely be replaced with a new task.
@@ -226,11 +222,11 @@
 
   async function pauseAwareWait(task, timeMs) {
     let left = Math.max(0, timeMs);
-    while (isActive(task) && (left > 0 || task.paused)) {
-      const step = task.paused ? 100 : Math.min(180, left);
+    while (isActive(task) && (left > 0 || (task.state === "paused"))) {
+      const step = (task.state === "paused") ? 100 : Math.min(180, left);
       const started = performance.now();
       await backgroundWait(step);
-      if (!task.paused) left -= performance.now() - started;
+      if (!(task.state === "paused")) left -= performance.now() - started;
     }
   }
 
@@ -302,7 +298,7 @@
     const progress = status.total ? Math.round(status.index * 100 / status.total) : 0;
     const labels = {
       running: `Typing · ${status.index} / ${status.total} · ${status.mode || "preparing"}`,
-      paused: `Paused · ${status.index} / ${status.total}`,
+      paused: `Paused · ${status.index} / ${status.total}${status.pauseReason ? " · " + status.pauseReason : ""}`,
       done: `Sent ${status.total} characters · verify your doc`,
       stopped: `Stopped · ${status.index} / ${status.total}${status.error ? " · " + status.error : ""}`,
       error: `Error: ${status.error || "typing failed"}`,
@@ -325,152 +321,112 @@
     ));
   }
 
-  // CDP only emits non-destructive text and Enter. Never exempt Backspace:
-  // Input.dispatchKeyEvent cannot pin a destructive keystroke to its original
-  // Google Docs iframe document across same-element navigation.
-  function isExpectedCdpKey(task, event) {
-    if (task.mode !== "CDP" || !task.cdpKeyInFlight) return false;
-    const key = event.key || (event.keyCode === 13 ? "Enter" : "");
-    return key === "Enter" && task.cdpKeyKind === "Enter";
-  }
-
-  // Keyboard lock is local to the Docs tab. Our synthetic iframe events
-  // remain untrusted, so this listener does not block the extension itself.
-  function enableKeyboardLock(task) {
-    if (!task.options.keyboardLock) return;
-    disableKeyboardLock();
+  // One input guard per running task. Both top document and live editor
+  // iframe are observed; paused/stopped tasks never intercept input.
+  const POINTER_EVENTS = ["pointermove", "mousemove", "pointerdown", "pointerup",
+    "mousedown", "mouseup", "click", "dblclick", "auxclick", "contextmenu",
+    "dragstart", "drag", "dragend", "drop", "selectstart", "wheel"];
+  const KEY_EVENTS = ["keydown", "keypress", "keyup"];
+  const INPUT_EVENTS = [...POINTER_EVENTS, ...KEY_EVENTS];
+  function installInputGuard(task) {
+    if (task.guard || task.state !== "running") return;
     const watched = new Set();
-    let enabled = true;
-    const onKey = event => {
-      if (!enabled || job !== task || task.state !== "running" || !event.isTrusted ||
-          isExpectedCdpKey(task, event)) return;
-      // Consume the event before pause changes the task state.
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (event.type === "keydown" && event.key === "Escape") pause();
-    };
-    const watch = node => {
-      if (!node || watched.has(node)) return;
-      try {
-        for (const type of ["keydown", "keypress", "keyup"]) node.addEventListener(type, onKey, true);
-        watched.add(node);
-      } catch (error) {
-        for (const type of ["keydown", "keypress", "keyup"]) {
-          try { node.removeEventListener(type, onKey, true); } catch {}
-        }
-        throw error;
-      }
-    };
-    let interval;
-    keyboardLockController = () => {
-      enabled = false;
-      task.syncKeyboardFrame = null;
-      if (interval !== undefined) clearInterval(interval);
-      for (const node of watched) {
-        for (const type of ["keydown", "keypress", "keyup"]) {
-          try { node.removeEventListener(type, onKey, true); }
-          catch (error) { console.warn("[Auto Type] Keyboard lock listener cleanup failed", error); }
-        }
-      }
-    };
-    task.syncKeyboardFrame = snapshot => watch(snapshot.doc);
-    const poll = () => {
-      try { syncInputProtection(task); }
-      catch { /* Retried synchronously before the next input. */ }
-    };
-    try {
-      watch(document);
-      poll();
-      interval = setInterval(poll, 1000);
-    } catch (error) {
-      disableKeyboardLock();
-      throw error;
-    }
-  }
-  function disableKeyboardLock() {
-    // Clear the controller first, even if a listener cannot be removed.
-    const cleanup = keyboardLockController;
-    keyboardLockController = null;
-    if (cleanup) cleanup();
-  }
-
-  // Advanced Mouse Lock is an in-page guard, NOT OS pointer capture or the
-  // browser Pointer Lock API. It prevents accidental edits without moving
-  // the caret, hiding the cursor, or stealing the Docs input iframe's focus.
-  // Capture on both window/document and the same-origin Docs input iframe.
-  // Don't leave a full-screen overlay in the page: a Chrome extension reload
-  // could strand a stale DOM shield and leave Docs impossible to click.
-  const MOUSE_LOCK_EVENTS = [
-    "pointerdown", "pointerup", "mousedown", "mouseup", "click",
-    "dblclick", "auxclick", "contextmenu", "dragstart", "drag",
-    "dragend", "drop", "selectstart", "wheel", "pointermove", "mousemove"
-  ];
-
-  function enableMouseLock(task) {
-    if (!task.options.mouseLock || task.state !== "running" || mouseLockController) return;
-    const watched = new Set();
-    let enabled = true;
-    const onMouse = event => {
-      if (!enabled || job !== task || task.state !== "running" || !event.isTrusted) return;
-      // Movement with no button held cannot change the editor selection.
-      if ((event.type === "pointermove" || event.type === "mousemove") &&
-          !event.buttons) return;
-
-      // The floating Pause / Stop controls must remain usable.
-      if (isOverlayEvent(event)) return;
-
+    let closed = false, frame = null, timer, observer;
+    let lastPoint = null;
+    const swallow = event => {
       if (event.cancelable) event.preventDefault();
       event.stopImmediatePropagation();
     };
-    const watch = node => {
-      if (!node?.addEventListener || watched.has(node)) return;
-      try {
-        for (const type of MOUSE_LOCK_EVENTS) node.addEventListener(type, onMouse, {capture: true, passive: false});
+    const onInput = event => {
+      if (closed || job !== task || task.state !== "running" ||
+          !event.isTrusted || isOverlayEvent(event)) return;
+      const type = event.type;
+      if (KEY_EVENTS.includes(type)) {
+        // Trusted CDP Enter cannot be distinguished from a real simultaneous Enter.
+        if (task.mode === "CDP" && task.cdpKeyInFlight &&
+            task.cdpKeyKind === "Enter" && (event.key === "Enter" || event.keyCode === 13)) return;
+        if (task.options.keyboardLock) {
+          swallow(event);
+          if (type === "keydown" && event.key === "Escape") pause("Escape");
+        } else if (type === "keydown") {
+          pause("Manual keyboard input");
+        }
+        return;
+      }
+      if (type === "pointermove" || type === "mousemove") {
+        const point = Number.isFinite(event.screenX) && Number.isFinite(event.screenY)
+          ? [event.screenX,event.screenY] : null;
+        const delta = Number(event.movementX) || Number(event.movementY);
+        const moved = Boolean(delta) || (point && lastPoint &&
+          (point[0] !== lastPoint[0] || point[1] !== lastPoint[1])) ||
+          (point && !lastPoint && event.movementX === undefined && event.movementY === undefined);
+        if (point) lastPoint = point;
+        if (moved) pause("Mouse moved");
+        return;
+      }
+      if (task.options.mouseLock) swallow(event);
+      else if (["pointerdown","mousedown","click","wheel","dragstart","drop","selectstart"].includes(type))
+        pause("Manual mouse input");
+    };
+    const unwatch = node => {
+      watched.delete(node);
+      for (const type of INPUT_EVENTS) {
+        try { node.removeEventListener(type, onInput, true); }
+        catch (error) { console.warn("[Auto Type] Input listener cleanup failed", error); }
+      }
+    };
+    const sync = () => {
+      if (closed) return;
+      const next = document.querySelector("iframe.docs-texteventtarget-iframe");
+      if (frame !== next) {
+        frame?.removeEventListener?.("load", sync, true);
+        frame = next;
+        frame?.addEventListener?.("load", sync, true);
+      }
+      let innerDoc, innerWindow;
+      try { innerDoc = frame?.contentDocument; innerWindow = frame?.contentWindow; }
+      catch { /* inaccessible frame; the top document remains protected */ }
+      const targets = new Set([window, document, innerWindow, innerDoc]
+        .filter(node => node?.addEventListener && node?.removeEventListener));
+      for (const node of watched) if (!targets.has(node)) unwatch(node);
+      for (const node of targets) {
+        if (watched.has(node)) continue;
         watched.add(node);
-      } catch (error) {
-        for (const type of MOUSE_LOCK_EVENTS) {
-          try { node.removeEventListener(type, onMouse, true); } catch {}
-        }
-        throw error;
+        for (const type of INPUT_EVENTS)
+          node.addEventListener(type, onInput, {capture:true, passive:false});
       }
     };
-    let interval;
-    mouseLockController = () => {
-      enabled = false; // Retired listeners cannot block input after resume.
-      task.syncMouseFrame = null;
-      if (interval !== undefined) clearInterval(interval);
-      for (const node of watched) {
-        for (const type of MOUSE_LOCK_EVENTS) {
-          try { node.removeEventListener(type, onMouse, true); }
-          catch (error) { console.warn("[Auto Type] Mouse lock cleanup failed", error); }
-        }
-      }
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      task.guard = null;
+      if (timer !== undefined) clearInterval(timer);
+      observer?.disconnect();
+      try { frame?.removeEventListener?.("load", sync, true); }
+      catch (error) { console.warn("[Auto Type] Frame listener cleanup failed", error); }
+      for (const node of watched) unwatch(node);
     };
-    task.syncMouseFrame = snapshot => {
-      if (snapshot.doc) {
-        watch(snapshot.frame?.contentWindow);
-        watch(snapshot.doc);
-      }
+    const refresh = () => {
+      try { sync(); }
+      catch (error) { console.warn("[Auto Type] Input guard refresh failed", error); pause("Input protection unavailable"); }
     };
-    const poll = () => {
-      try { syncInputProtection(task); }
-      catch { /* Retried synchronously before the next input. */ }
-    };
+    task.guard = {sync, close};
     try {
-      watch(window);
-      watch(document);
-      poll();
-      interval = setInterval(poll, 1000);
-    } catch (error) {
-      disableMouseLock();
-      throw error;
-    }
-  }
-
-  function disableMouseLock() {
-    const cleanup = mouseLockController;
-    mouseLockController = null;
-    if (cleanup) cleanup();
+      sync();
+      if (typeof MutationObserver === "function") {
+        observer = new MutationObserver(records => {
+          // Only iframe changes matter, not every Docs canvas mutation.
+          const selector = "iframe.docs-texteventtarget-iframe";
+          const relevant = node => node?.nodeType === 1 &&
+            (node === frame || node.matches?.(selector) || node.querySelector?.(selector));
+          if (records.some(record => record.type === "attributes" ? relevant(record.target) :
+              [...(record.addedNodes || []), ...(record.removedNodes || [])].some(relevant))) refresh();
+        });
+        observer.observe(document.documentElement || document,
+          {childList:true,subtree:true,attributes:true,attributeFilter:["src","class"]});
+      }
+      timer = setInterval(refresh, 1000);
+    } catch (error) { close(); throw error; }
   }
 
   function wrongLetter(char) {
@@ -485,198 +441,46 @@
     return at === "sentence" ? sentence : at === "word" ? word : sentence || word;
   }
 
-  // The private Docs iframe API does not expose a dependable cursor-position
-  // guarantee. Watch trusted user interactions while a temporary typo exists,
-  // and stop rather than issuing Backspace at a potentially moved caret.
-  const CORRECTION_INTERRUPTED =
-    "Correction interrupted; a temporary typo may remain. Review the last character.";
-  // Detect editor replacement between temporary insertion and correction.
-  // Matching frame identity is necessary, but not proof of caret identity.
-  function correctionFrameSnapshot() {
-    const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
-    try {
-      const doc = frame?.contentDocument || null;
-      return {frame, doc, accessible: !frame || !!doc};
-    }
-    catch { return {frame, doc: null, accessible: false}; }
-  }
-  function correctionFrameUnchanged(before) {
-    const after = correctionFrameSnapshot();
-    return before.accessible && after.accessible &&
-      before.frame === after.frame && before.doc === after.doc;
-  }
-
-  // Synchronize all three guards against one snapshot, in interception
-  // order. A timer is only a convenience; never trust a newly seen frame
-  // for correction until these synchronous registrations have succeeded.
-  function syncInputProtection(task) {
-    const snapshot = correctionFrameSnapshot();
-    if (!snapshot.accessible && (task.options.keyboardLock ||
-        task.options.mouseLock || task.verifiedCorrection))
-      throw new Error("Editor input iframe is inaccessible; input protection cannot be verified");
-    task.syncMouseFrame?.(snapshot);
-    task.syncKeyboardFrame?.(snapshot);
-    task.syncCorrectionFrame?.(snapshot);
-    if (!correctionFrameUnchanged(snapshot))
-      throw new Error("Editor input iframe changed while installing input protection");
-    return snapshot;
-  }
-
-  function guardCorrectionPosition(task) {
-    const observed = new Set();
-    const types = ["pointerdown", "mousedown", "keydown"];
-    const onUserAction = event => {
-      if (job !== task || !event.isTrusted || !task.correctionPending) return;
-      // Destructive correction is restricted to the iframe bridge. CDP
-      // never queues Backspace; iframe guards still interrupt user actions.
-      // Overlay controls handle their own pause/stop clicks.
-      if (isOverlayEvent(event)) return;
-      task.correctionUnsafe = true;
-      if (task.state === "running" || task.state === "paused") stop();
-    };
-    const watch = node => {
-      if (!node || observed.has(node)) return;
-      try {
-        for (const type of types) node.addEventListener(type, onUserAction, true);
-        observed.add(node);
-      } catch (error) {
-        for (const type of types) {
-          try { node.removeEventListener(type, onUserAction, true); } catch {}
-        }
-        throw error;
-      }
-    };
-    task.syncCorrectionFrame = snapshot => watch(snapshot.doc);
-    const watchedFrames = new Set();
-    const frameSelector = "iframe.docs-texteventtarget-iframe";
-    let interval;
-    let observer;
-    // MutationObserver callbacks run at a microtask checkpoint before a
-    // subsequent CDP keydown task. Do not wait for the one-second frame poll.
-    const isEditorFrameNode = node => node?.nodeType === 1 &&
-      Boolean(node.matches?.(frameSelector) || node.querySelector?.(frameSelector));
-    const relevantFrameMutation = record => {
-      if (record.type === "attributes") return isEditorFrameNode(record.target);
-      for (const node of record.addedNodes || []) {
-        if (isEditorFrameNode(node)) return true;
-      }
-      for (const node of record.removedNodes || []) {
-        if (isEditorFrameNode(node)) return true;
-      }
-      return false;
-    };
-    const syncFrameImmediately = () => {
-      try {
-        const snapshot = syncInputProtection(task);
-        // A real iframe is an EventTarget. Older test doubles can expose
-        // contentDocument without implementing frame event methods.
-        if (snapshot.frame && !watchedFrames.has(snapshot.frame) &&
-            typeof snapshot.frame.addEventListener === "function") {
-          snapshot.frame.addEventListener("load", syncFrameImmediately, true);
-          watchedFrames.add(snapshot.frame);
-        }
-        // Stop releases Keyboard lock, but the correction listener must
-        // follow the NEW document until the in-flight CDP call has returned.
-        if (task.correctionPending && task.correctionOriginalFrame &&
-            !correctionFrameUnchanged(task.correctionOriginalFrame)) {
-          task.correctionUnsafe = true;
-          if (task.state === "running" || task.state === "paused") stop();
-        }
-      } catch {
-        task.correctionUnsafe = true;
-        if (task.state === "running" || task.state === "paused") stop();
-      }
-    };
-    const cleanup = () => {
-      task.syncCorrectionFrame = null;
-      if (interval !== undefined) clearInterval(interval);
-      observer?.disconnect();
-      for (const frame of watchedFrames) {
-        try { frame.removeEventListener("load", syncFrameImmediately, true); }
-        catch (error) { console.warn("[Auto Type] Editor frame load listener cleanup failed", error); }
-      }
-      for (const node of observed) {
-        for (const type of types) {
-          try { node.removeEventListener(type, onUserAction, true); }
-          catch (error) { console.warn("[Auto Type] Correction guard cleanup failed", error); }
-        }
-      }
-    };
-    try {
-      watch(document);
-      // A newly inserted/replaced iframe is protected at the next microtask.
-      // The load listener also catches same-element document navigations.
-      if (typeof MutationObserver === "function") {
-        observer = new MutationObserver(records => {
-          if (records.some(relevantFrameMutation)) syncFrameImmediately();
-        });
-        observer.observe(document.documentElement || document, {
-          childList: true, subtree: true, attributes: true,
-          attributeFilter: ["class", "src"]
-        });
-      }
-      syncFrameImmediately();
-      interval = setInterval(syncFrameImmediately, 1000);
-      return cleanup;
-    } catch (error) { cleanup(); throw error; }
-  }
-
-  async function sendCharacter(task, character, cdpFallbackCharacter = character) {
-    syncInputProtection(task);
+  async function sendCharacter(task, character) {
+    task.guard?.sync();
     if (task.mode === "iframe") {
-      try { await insertViaIframe(character, task.options.enterStrategy); return; }
-      catch (e) {
-        // A missing acknowledgement may mean the character was already
-        // dispatched. Only switch transports on explicit pre-dispatch errors.
+      try { await insertViaIframe(character, task.options.enterStrategy); return true; }
+      catch (error) {
+        // Only retry explicit pre-dispatch failures; a lost reply may mean
+        // the character has already been delivered.
         if (task.options.mode === "iframe" || !HAS_CDP ||
-            !/Google Docs input (?:iframe|target) is unavailable/.test(e?.message || "")) throw e;
+            !/Google Docs input (?:iframe|target) is unavailable/.test(error?.message || "")) throw error;
         task.mode = "CDP";
       }
     }
+    // A pause/stop can arrive while the iframe failure is being returned.
+    if (task.state === "paused") await pauseAwareWait(task, 0);
+    if (!isActive(task)) return false;
     const info = frameTarget();
     if (info) focusFrame(info);
-    syncInputProtection(task);
-    // When a correction's temporary typo falls back from iframe to CDP
-    // BEFORE dispatch, insert the intended character directly. No typo and
-    // no destructive cleanup need be sent through CDP.
-    const outgoing = cdpFallbackCharacter;
+    task.guard?.sync();
     task.cdpKeyInFlight = true;
-    task.cdpKeyKind = outgoing === "\n" ? "Enter" : null;
-    try { await sendToBackground("AT_BG_INSERT", {char: outgoing, sessionId: task.sessionId}); }
-    finally {
-      task.cdpKeyKind = null;
-      task.cdpKeyInFlight = false;
-    }
+    task.cdpKeyKind = character === "\n" ? "Enter" : null;
+    try { await sendToBackground("AT_BG_INSERT", {char:character, sessionId:task.sessionId}); }
+    finally { task.cdpKeyKind = null; task.cdpKeyInFlight = false; }
+    return true;
   }
 
-  async function sendBackspace(task, correctionFrame) {
-    // Fail closed even if a caller reaches this function after transport
-    // fallback: only the iframe transport may perform a correction Backspace.
-    if (task.mode !== "iframe") throw new Error(CORRECTION_INTERRUPTED);
-    syncInputProtection(task);
-    if (!correctionFrameUnchanged(correctionFrame) || !isActive(task) ||
-        task.paused || task.correctionUnsafe)
-      throw new Error(CORRECTION_INTERRUPTED);
-    // Never retry an ambiguous destructive iframe edit on another transport.
-    await bridgeRequest("backspace");
-  }
-  function pause() {
+  function pause(reason = "") {
     if (!job || job.state !== "running") return;
-    // Resuming after a pause cannot guarantee the old cursor position.
-    if (job.correctionPending) job.correctionUnsafe = true;
-    job.paused = true;
     job.state = "paused";
-    disableMouseLock();
+    job.pauseReason = typeof reason === "string" ? reason : "";
+    job.guard?.close();
     updateOverlay();
     notifyBadge(job, true);
   }
   function resume() {
     if (!job || job.state !== "paused") return;
-    job.paused = false;
     job.state = "running";
-    try { enableMouseLock(job); }
+    job.pauseReason = "";
+    try { installInputGuard(job); }
     catch (error) {
-      job.error = "Mouse lock could not be restored: " + (error?.message || String(error));
+      job.error = "Input protection could not be restored: " + (error?.message || String(error));
       stop();
       return;
     }
@@ -684,31 +488,21 @@
     notifyBadge(job, true);
   }
   function stop() {
-    if (!job || !["running", "paused"].includes(job.state)) return;
-    if (job.correctionPending) {
-      job.correctionUnsafe = true;
-      job.error = CORRECTION_INTERRUPTED;
-    }
-    job.stopped = true;
-    job.paused = false;
+    if (!job || !isActive(job)) return;
     job.state = "stopped";
-    disableMouseLock();
+    job.guard?.close();
     updateOverlay();
     notifyBadge(job, true);
     // The typing loop handles debugger cleanup in its finally block.
   }
 
   async function run(task) {
-    let disableCorrectionGuard = () => {};
     try {
       task.phase = "preparing input iframe";
       task.mode = task.options.mode === "cdp" ? "CDP" : "iframe";
+      installInputGuard(task);
       if (task.options.mode !== "cdp") {
-        try {
-          const probe = await prepareIframe();
-          // A legacy dispatch acknowledgement does not verify editor acceptance.
-          task.verifiedCorrection = probe?.verifiedCorrection === true;
-        }
+        try { await prepareIframe(); }
         catch (error) {
           if (task.options.mode === "iframe") throw error;
           if (!HAS_CDP) throw error;
@@ -719,11 +513,6 @@
       task.phase = "typing";
       if (task.options.showOverlay) ensureOverlay();
       else if (overlay?.host?.isConnected) overlay.host.remove();
-      // Locks must intercept input before the correction guard. A blocked
-      // interaction cannot move the caret and must not stop a correction.
-      enableMouseLock(task);
-      enableKeyboardLock(task);
-      disableCorrectionGuard = guardCorrectionPosition(task);
       updateOverlay();
       await pauseAwareWait(task, task.options.startDelay * 1000);
       task.nextRestAt = randomInt(
@@ -731,58 +520,16 @@
         Math.max(task.options.restMinChars, task.options.restMaxChars));
 
       for (let i = 0; i < task.chars.length && isActive(task); i++) {
-        while (task.paused && isActive(task)) await backgroundWait(100);
+        while ((task.state === "paused") && isActive(task)) await backgroundWait(100);
         if (!isActive(task)) break;
 
         const character = task.chars[i];
         const accidental = wrongLetter(character);
-        // CDP key dispatch is tab-focused, not bound to the original
-        // iframe document. Never create a typo that requires CDP Backspace.
-        const correction = task.verifiedCorrection && task.mode !== "CDP" && accidental && task.options.fixTypo &&
-          Math.random() * 100 < task.options.fixChance;
-        const leaveTypo = accidental && !correction && task.options.typo &&
+        // Automatic destructive correction stays disabled. No hidden
+        // correction state or Backspace branch remains in the typing loop.
+        const leaveTypo = accidental && task.options.typo &&
           Math.random() * 100 < task.options.typoChance;
-
-        let targetSent = false;
-        if (correction) {
-          task.correctionPending = true;
-          task.correctionUnsafe = false;
-          try {
-            const correctionFrame = syncInputProtection(task);
-            task.correctionOriginalFrame = correctionFrame;
-            // In auto mode an explicit pre-dispatch iframe failure may
-            // switch to CDP. In that case sendCharacter inserts the correct
-            // character instead of the typo and we skip the correction.
-            await sendCharacter(task, accidental, character);
-            if (task.mode === "CDP") {
-              targetSent = true;
-            } else {
-              await pauseAwareWait(task, task.options.fixPauseMs);
-              if (!isActive(task) || task.correctionUnsafe ||
-                  !correctionFrameUnchanged(correctionFrame)) {
-                if (isActive(task)) stop();
-                break;
-              }
-              await sendBackspace(task, correctionFrame);
-              await pauseAwareWait(task, Math.min(250, task.options.fixPauseMs / 2));
-              if (!isActive(task) || task.correctionUnsafe ||
-                  !correctionFrameUnchanged(correctionFrame)) {
-                if (isActive(task)) stop();
-                break;
-              }
-              await sendCharacter(task, character);
-              targetSent = true;
-            }
-          } finally {
-            task.correctionOriginalFrame = null;
-            task.correctionPending = false;
-          }
-        } else {
-          await sendCharacter(task, leaveTypo ? accidental : character);
-          targetSent = true;
-        }
-        // Do not report completion for a cancelled partial correction.
-        if (!targetSent) break;
+        if (!await sendCharacter(task, leaveTypo ? accidental : character)) break;
         task.index = i + 1;
         task.sinceRest += 1;
         updateOverlay();
@@ -822,7 +569,7 @@
       if (task.state !== "stopped") task.state = "done";
     } catch (error) {
       task.error = error?.message || String(error);
-      if (!task.stopped) task.state = "error";
+      if (task.state !== "stopped") task.state = "error";
       // Diagnostic metadata only; never log source text or typed characters.
       let frame = {present: false};
       try {
@@ -836,18 +583,12 @@
       });
     } finally {
       try {
-        try { disableMouseLock(); }
-        catch (error) { console.warn("[Auto Type] Mouse lock cleanup failed", error); }
-        try { disableKeyboardLock(); }
-        catch (error) { console.warn("[Auto Type] keyboard lock cleanup failed", error); }
+        task.guard?.close();
         if (HAS_CDP && task.mode === "CDP") {
           try { await sendToBackground("AT_BG_DETACH", {sessionId: task.sessionId}); }
           catch { /* debugger may already be detached */ }
         }
       } finally {
-        // Always release the session guard, even when cleanup itself throws.
-        try { disableCorrectionGuard(); }
-        catch (error) { console.warn("[Auto Type] Correction guard cleanup failed", error); }
         task.finalized = true;
         try { updateOverlay(); }
         catch (error) { console.warn("[Auto Type] overlay update failed", error); }
@@ -870,11 +611,9 @@
     localWaitFallback = false;
     nextBackgroundProbeAt = 0;
     job = {
-      chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, verifiedCorrection: false, index: 0, state: "running", stopped: false,
-      paused: false, options, mode: "", error: "", sinceRest: 0,
+      chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, index: 0, state: "running", pauseReason: "", options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
-      correctionPending: false, correctionUnsafe: false,
-      correctionOriginalFrame: null
+      guard: null
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

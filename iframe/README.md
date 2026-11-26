@@ -1,5 +1,7 @@
 # Auto Type — iframe edition
 
+**Automatic pause:** Moving the mouse inside the Docs page or manually interacting with an unlocked editor pauses the task. Synthetic input and extension controls do not trigger this guard. Resume continues with the next unsent character at the current insertion point; review the document first. One already-dispatched input may finish. No collaborative-edit tracking or full-text verification is performed.
+
 **Safety:** Automatic typo correction is temporarily disabled because the Google Docs iframe cannot verify character acceptance. Configuration fields remain compatible.
 
 This is the iframe-only build of Auto Type. It enters text through Google Docs' internal input iframe and does not request Chrome's `debugger` permission.

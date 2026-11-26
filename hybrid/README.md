@@ -1,5 +1,7 @@
 # Auto Type — Hybrid edition
 
+**Automatic pause:** Moving the mouse inside the Docs page or manually interacting with an unlocked editor pauses the task. Synthetic input and extension controls do not trigger this guard. Resume continues with the next unsent character at the current insertion point; review the document first. One already-dispatched input may finish. No collaborative-edit tracking or full-text verification is performed.
+
 This build of Auto Type uses the Google Docs input iframe by default and can fall back to Chrome DevTools Protocol (CDP). It requires Chrome's `debugger` permission at installation.
 
 ## Version 1.0.4-beta
