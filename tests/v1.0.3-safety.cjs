@@ -319,7 +319,7 @@ test("v1.0.4 beta metadata and edition parity", () => {
   for (const edition of ["iframe","hybrid"]) {
     const manifest = JSON.parse(read(edition+"/manifest.json"));
     assert.equal(manifest.version,"1.0.4");
-    assert.equal(manifest.version_name,"1.0.4-beta");
+    assert.equal(manifest.version_name,"1.0.4");
   }
 });
 

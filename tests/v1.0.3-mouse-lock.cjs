@@ -303,7 +303,7 @@ test("Advanced popup exposes an off-by-default Mouse lock setting",()=>{
     assert.ok(html.indexOf('id="mouseLock"')>html.indexOf('id="advancedPanel"'));
     assert.match(script, /mouseLock: false/);
     assert.match(script, /const TOGGLES = \[[^\]]*"mouseLock"/);
-    assert.equal(JSON.parse(read(edition+"/manifest.json")).version_name,"1.0.4-beta");
+    assert.equal(JSON.parse(read(edition+"/manifest.json")).version_name,"1.0.4");
   }
 });
 

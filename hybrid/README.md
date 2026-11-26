@@ -2,9 +2,9 @@
 
 This build of Auto Type uses the Google Docs input iframe by default and can fall back to Chrome DevTools Protocol (CDP). It requires Chrome's `debugger` permission at installation.
 
-## Version 1.0.4-beta
+## Version 1.0.4
 
-Pre-release build: compact AT1 configuration tokens, validated JSON import/export and local file backups, optional uninstall feedback, and corrected popup logo alignment. Review the root README before using a beta build. The existing v1.0.3 safety fixes remain included.
+Stable release: compact AT1 configuration tokens, validated JSON import/export and local file backups, optional uninstall feedback, and corrected popup logo alignment. Review the root README before installing. The existing v1.0.3 safety fixes remain included.
 
 **Fix typo safety note:** Automatic typo correction is temporarily disabled in both transports: Google Docs cannot reliably verify that a temporary typo was accepted. The configured correction preferences remain stored for compatibility. Intentional, uncorrected typos remain optional through the separate Typo setting.
 
@@ -37,7 +37,7 @@ This is best-effort interception of trusted page events; Google Docs may handle 
 ## Input behavior
 
 - Characters are sent as synthetic input events through Google Docs' input iframe.
-- Enter and Backspace are handled as key events; consecutive line breaks are supported.
+- Enter is handled as a key event; consecutive line breaks are supported.
 - The extension attempts to continue when the document is in a background tab, subject to Chrome and Google Docs limitations.
 - A dispatched event may not be accepted by Google Docs. Check the final document content.
 

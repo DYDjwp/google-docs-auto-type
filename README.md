@@ -4,16 +4,16 @@ Auto Type is a Chrome extension for entering text into Google Docs at a configur
 
 The project is distributed in two editions. Both use the same interface and typing controls; the Hybrid edition adds Chrome DevTools Protocol (CDP) as an alternative input method.
 
-**Current stable version: v1.0.3.** Download from [GitHub Releases](../../releases/latest). **Beta preview: [v1.0.4-beta](../../releases/tag/v1.0.4-beta)** (pre-release, not the default stable download).
+**Current stable version: v1.0.4.** Download from [GitHub Releases](../../releases/latest). Experimental caret monitoring and recovery are developed separately on `dev/1.0.5`.
 
-Chrome requires a numeric `manifest.version` (`1.0.4`). The user-facing prerelease label is provided separately as `manifest.version_name` (`1.0.4-beta`). Updating a local unpacked installation requires reloading it in `chrome://extensions`; merging the repository does not automatically update an installed Chrome extension.
+Chrome requires a numeric `manifest.version` (`1.0.4`). The user-facing version label is provided separately as `manifest.version_name` (`1.0.4`). Updating a local unpacked installation requires reloading it in `chrome://extensions`; merging the repository does not automatically update an installed Chrome extension.
 
-**Beta release (v1.0.4-beta):** Both editions register an optional uninstall feedback page. Feedback is submitted only when the user chooses Send feedback; the extension does not send document text or an identifier to it.
+**Release (v1.0.4):** Both editions register an optional uninstall feedback page. Feedback is submitted only when the user chooses Send feedback; the extension does not send document text or an identifier to it.
 
-**Configuration sharing (v1.0.4-beta):** Expand Configuration sharing, select Token (compact) or JSON (readable), and Export & copy. Import automatically recognizes either format. Download JSON creates a local `auto-type-config.json` backup; Open JSON file loads it for review before clicking Import. Both formats include only typing settings, not drafts or document information. Full JSON exports use `{"schemaVersion":1,"settings":{...}}`; imports also accept a flat settings object (for example `{"advancedMode":true,"cpm":450}`). Missing fields use frozen version 1 defaults, unknown/invalid fields are rejected, and successful imports replace settings for the next session. The iframe edition adjusts unsupported CDP modes. No new permissions or server needed.
+**Configuration sharing (v1.0.4):** Expand Configuration sharing, select Token (compact) or JSON (readable), and Export & copy. Import automatically recognizes either format. Download JSON creates a local `auto-type-config.json` backup; Open JSON file loads it for review before clicking Import. Both formats include only typing settings, not drafts or document information. Full JSON exports use `{"schemaVersion":1,"settings":{...}}`; imports also accept a flat settings object (for example `{"advancedMode":true,"cpm":450}`). Missing fields use frozen version 1 defaults, unknown/invalid fields are rejected, and successful imports replace settings for the next session. The iframe edition adjusts unsupported CDP modes. No new permissions or server needed.
 
-The v1.0.4-beta popup fixes the logo alignment: the green period now stays inside the `at.` badge. This is a UI-only change.
-\n**Safety notice for current source:** CDP mode skips automatic typo-and-Backspace correction to prevent a queued destructive key reaching a different Docs iframe document. Normal typing and optional intentional typos remain available. Automatic correction is temporarily disabled in both transports because iframe event delivery cannot verify that a temporary character was accepted. Existing configuration fields are retained for compatibility. Previously downloaded beta ZIPs do not update automatically; re-download the beta after a release refresh and reload any open Google Docs tabs so their content scripts match the updated popup.
+The v1.0.4 popup fixes the logo alignment: the green period now stays inside the `at.` badge. This is a UI-only change.
+**Safety notice for current source:** CDP mode skips automatic typo-and-Backspace correction to prevent a queued destructive key reaching a different Docs iframe document. Normal typing and optional intentional typos remain available. Automatic correction is temporarily disabled in both transports because iframe event delivery cannot verify that a temporary character was accepted. Existing configuration fields are retained for compatibility. Previously downloaded ZIPs do not update automatically; download the stable release and reload any open Google Docs tabs so their content scripts match the updated popup.
 
 **Stop and restart:** Stop reports immediately, but a pacing wait, keyboard/mouse lock cleanup or CDP detach can continue briefly. Start remains disabled while the existing task is finalizing and re-enables only after the page reports it is safe. This is based on the real cleanup state rather than a fixed timer. If the popup requests a document reload after an extension update, reload the Google Docs tab before starting another task.
 
@@ -24,7 +24,7 @@ The v1.0.4-beta popup fixes the logo alignment: the green period now stays insid
 | Input method | Google Docs iframe | iframe first; CDP fallback |
 | Chrome debugger permission | Not required | Required |
 | Directory | [`iframe/`](iframe/) | [`hybrid/`](hybrid/) |
-| Latest stable package | `auto-type-1.0.3-iframe.zip` | `auto-type-1.0.3-hybrid.zip` |
+| Latest stable package | `auto-type-1.0.4-iframe.zip` | `auto-type-1.0.4-hybrid.zip` |
 
 The iframe edition is recommended unless CDP support is specifically needed. Chrome does not support requesting the `debugger` permission as an optional permission, so Hybrid is maintained as a separate extension package.
 
@@ -88,8 +88,8 @@ The extension attempts to preserve paragraph breaks, including consecutive blank
 
 - Three preset speeds and an advanced characters-per-minute setting.
 - Adjustable timing variation, punctuation pauses, and random breaks.
-- Optional uncorrected typos, corrected typos, and longer breaks at word or sentence boundaries.
-- Support for line breaks, Backspace, and configurable Enter-event handling.
+- Optional uncorrected typos and longer breaks at word or sentence boundaries.
+- Support for line breaks and configurable Enter-event handling.
 - Pause, resume, and stop controls; optional keyboard lock, Mouse lock (Advanced), floating controls, and keyboard shortcuts.
 - Best-effort typing while another Chrome tab is active.
 

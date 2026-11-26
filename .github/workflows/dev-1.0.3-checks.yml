@@ -1,9 +1,10 @@
-name: Validate Auto Type (v1.0.4-beta)
+name: Validate and release Auto Type
 
 on:
   push:
     branches:
       - main
+      - 'dev/**'
   pull_request:
 
 permissions:
@@ -20,11 +21,38 @@ jobs:
       - name: Check both Chrome extension editions
         run: |
           set -euo pipefail
+          node -e "const a=require('./iframe/manifest.json'),b=require('./hybrid/manifest.json');if(a.version!==b.version||a.version_name!==b.version_name||!/^\\d+\\.\\d+\\.\\d+$/.test(a.version))process.exit(1)"
           for edition in iframe hybrid; do
-            node -e "const m=require('./${edition}/manifest.json');if(m.version !== '1.0.4' || m.version_name !== '1.0.4-beta')process.exit(1)"
-            for script in background.js content.js main-bridge.js config-codec.js popup.js; do
-              node --check "$edition/$script"
-            done
+            for script in "$edition"/*.js; do node --check "$script"; done
           done
       - name: Run regression tests
         run: node --test tests/*.cjs
+
+  release:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package and publish stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./iframe/manifest.json').version")"
+          label="$(node -p "require('./iframe/manifest.json').version_name")"
+          if [[ "$version" != "1.0.4" || "$label" != "$version" ]]; then
+            echo "Not the approved stable 1.0.4 release"; exit 0
+          fi
+          tag="v$version"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists; not overwriting"; exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/auto-type-release"
+          for edition in iframe hybrid; do
+            (cd "$edition" && zip -q -r "$RUNNER_TEMP/auto-type-release/auto-type-$version-$edition.zip" .)
+            unzip -t "$RUNNER_TEMP/auto-type-release/auto-type-$version-$edition.zip"
+          done
+          gh release create "$tag" "$RUNNER_TEMP"/auto-type-release/*.zip --target "$GITHUB_SHA" --title "Auto Type v$version" --latest --notes "Stable 1.0.4: configuration Token/JSON export and import, optional uninstall feedback, document-scoped drafts, safe Stop/Start cleanup, CDP document/session validation, and safer status handling. Automatic Fix typo is temporarily disabled because synthetic dispatch cannot establish editor acceptance. Intentional Typo remains available. Review the resulting document and reload Docs after upgrading."
