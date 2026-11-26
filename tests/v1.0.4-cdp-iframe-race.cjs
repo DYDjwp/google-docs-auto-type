@@ -141,8 +141,10 @@ for(const loadBeforeCommand of [false,true]) {
           assert.equal(h.send("AT_PAGE_STATUS").status.state,state);
         if(loadBeforeCommand) h.triggerLoad();
         else assert.equal(h.loadEvents,0,"load must not be fired yet");
+        // Assert the requested state at the exact moment the queued command
+        // is released; in particular Pause has not been converted to Stop.
+        assert.equal(h.send("AT_PAGE_STATUS").status.state,state);
         h.releaseInsert();
-        if(state==="paused") h.send("AT_PAGE_STOP"); // allow cleanup
         await h.finish();
         if(!loadBeforeCommand) h.triggerLoad(); // load only AFTER command
         assert.equal(h.messages.filter(x=>x.type==="AT_BG_BACKSPACE").length,0);
