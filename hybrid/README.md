@@ -6,6 +6,8 @@ This build of Auto Type uses the Google Docs input iframe by default and can fal
 
 Pre-release build: compact AT1 configuration tokens, validated JSON import/export and local file backups, optional uninstall feedback, and corrected popup logo alignment. Review the root README before using a beta build. The existing v1.0.3 safety fixes remain included.
 
+**Fix typo safety note:** Automatic typo correction uses a destructive Backspace only on the iframe transport. CDP mode (including automatic fallback) types the intended character directly instead of issuing CDP Backspace: Chrome CDP keyboard events are tab-focused and can target a newly navigated Docs iframe. Intentional, uncorrected typos remain optional through the separate Typo setting.
+
 ## Version 1.0.3
 
 This patch fixes editor-frame guard registration and failed draft autosave. Version 1.0.3 adds an Advanced Mode Mouse lock and includes safe interruption handling for typo correction, closed-tab draft cleanup, and a draft-quota recovery path. The popup displays the installed version directly from its manifest.

@@ -321,18 +321,13 @@
     ));
   }
 
-  // CDP key events are trusted. Permit the current command's own key events
-  // rather than exempting every real key during the entire CDP round trip.
+  // CDP only emits non-destructive text and Enter. Never exempt Backspace:
+  // Input.dispatchKeyEvent cannot pin a destructive keystroke to its original
+  // Google Docs iframe document across same-element navigation.
   function isExpectedCdpKey(task, event) {
     if (task.mode !== "CDP" || !task.cdpKeyInFlight) return false;
-    const key = event.key || (event.keyCode === 8 ? "Backspace" :
-      event.keyCode === 13 ? "Enter" : "");
-    if (task.cdpKeyKind !== key) return false;
-    if (key === "Backspace") {
-      return event.type === "keyup" ||
-        (event.type === "keydown" && task.cdpBackspaceExpected);
-    }
-    return key === "Enter";
+    const key = event.key || (event.keyCode === 13 ? "Enter" : "");
+    return key === "Enter" && task.cdpKeyKind === "Enter";
   }
 
   // Keyboard lock is local to the Docs tab. Our synthetic iframe events
@@ -527,28 +522,9 @@
     const observed = new Set();
     const types = ["pointerdown", "mousedown", "keydown"];
     const onUserAction = event => {
-      if (job !== task || !event.isTrusted) return;
-      // A CDP Backspace may reach Docs after Stop, Pause, or a caret move.
-      // Revalidate at trusted keydown; a send-time check is insufficient.
-      // Keep this listener until the in-flight background command finishes.
-      const key = event.key || (event.keyCode === 8 ? "Backspace" : "");
-      const cdpBackspace = task.cdpKeyInFlight && task.cdpKeyKind === "Backspace" &&
-        event.type === "keydown" && key === "Backspace";
-      if (cdpBackspace) {
-        const safe = task.cdpBackspaceExpected && task.correctionPending &&
-          task.state === "running" && !task.stopped && !task.paused &&
-          !task.correctionUnsafe && task.cdpCorrectionFrame &&
-          correctionFrameUnchanged(task.cdpCorrectionFrame);
-        task.cdpBackspaceExpected = false;
-        if (safe) return;
-        // An invalid or duplicate in-flight key must never delete source text.
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        task.correctionUnsafe = true;
-        if (task.state === "running" || task.state === "paused") stop();
-        return;
-      }
-      if (!task.correctionPending) return;
+      if (job !== task || !event.isTrusted || !task.correctionPending) return;
+      // Destructive correction is restricted to the iframe bridge. CDP
+      // never queues Backspace; iframe guards still interrupt user actions.
       // Overlay controls handle their own pause/stop clicks.
       if (isOverlayEvent(event)) return;
       task.correctionUnsafe = true;
@@ -597,8 +573,8 @@
         }
         // Stop releases Keyboard lock, but the correction listener must
         // follow the NEW document until the in-flight CDP call has returned.
-        if (task.correctionPending && task.cdpCorrectionFrame &&
-            !correctionFrameUnchanged(task.cdpCorrectionFrame)) {
+        if (task.correctionPending && task.correctionOriginalFrame &&
+            !correctionFrameUnchanged(task.correctionOriginalFrame)) {
           task.correctionUnsafe = true;
           if (task.state === "running" || task.state === "paused") stop();
         }
@@ -641,7 +617,7 @@
     } catch (error) { cleanup(); throw error; }
   }
 
-  async function sendCharacter(task, character) {
+  async function sendCharacter(task, character, cdpFallbackCharacter = character) {
     syncInputProtection(task);
     if (task.mode === "iframe") {
       try { await insertViaIframe(character, task.options.enterStrategy); return; }
@@ -656,9 +632,13 @@
     const info = frameTarget();
     if (info) focusFrame(info);
     syncInputProtection(task);
+    // When a correction's temporary typo falls back from iframe to CDP
+    // BEFORE dispatch, insert the intended character directly. No typo and
+    // no destructive cleanup need be sent through CDP.
+    const outgoing = cdpFallbackCharacter;
     task.cdpKeyInFlight = true;
-    task.cdpKeyKind = character === "\n" ? "Enter" : null;
-    try { await sendToBackground("AT_BG_INSERT", {char: character}); }
+    task.cdpKeyKind = outgoing === "\n" ? "Enter" : null;
+    try { await sendToBackground("AT_BG_INSERT", {char: outgoing}); }
     finally {
       task.cdpKeyKind = null;
       task.cdpKeyInFlight = false;
@@ -666,31 +646,15 @@
   }
 
   async function sendBackspace(task, correctionFrame) {
+    // Fail closed even if a caller reaches this function after transport
+    // fallback: only the iframe transport may perform a correction Backspace.
+    if (task.mode !== "iframe") throw new Error(CORRECTION_INTERRUPTED);
     syncInputProtection(task);
     if (!correctionFrameUnchanged(correctionFrame) || !isActive(task) ||
         task.paused || task.correctionUnsafe)
       throw new Error(CORRECTION_INTERRUPTED);
-    // In iframe mode, corrections use exactly the verified Backspace sequence.
-    if (task.mode === "iframe") {
-      // Never repeat a destructive edit via another transport when the
-      // first Backspace may already have been dispatched.
-      await bridgeRequest("backspace");
-      return;
-    }
-    const info = frameTarget();
-    // Do not refocus a different element immediately before a destructive edit.
-    if (info && info.doc !== correctionFrame.doc) throw new Error(CORRECTION_INTERRUPTED);
-    task.cdpKeyInFlight = true;
-    task.cdpKeyKind = "Backspace";
-    task.cdpBackspaceExpected = true;
-    task.cdpCorrectionFrame = correctionFrame;
-    try { await sendToBackground("AT_BG_BACKSPACE"); }
-    finally {
-      task.cdpBackspaceExpected = false;
-      task.cdpCorrectionFrame = null;
-      task.cdpKeyKind = null;
-      task.cdpKeyInFlight = false;
-    }
+    // Never retry an ambiguous destructive iframe edit on another transport.
+    await bridgeRequest("backspace");
   }
   function pause() {
     if (!job || job.state !== "running") return;
@@ -764,7 +728,9 @@
 
         const character = task.chars[i];
         const accidental = wrongLetter(character);
-        const correction = accidental && task.options.fixTypo &&
+        // CDP key dispatch is tab-focused, not bound to the original
+        // iframe document. Never create a typo that requires CDP Backspace.
+        const correction = task.mode !== "CDP" && accidental && task.options.fixTypo &&
           Math.random() * 100 < task.options.fixChance;
         const leaveTypo = accidental && !correction && task.options.typo &&
           Math.random() * 100 < task.options.typoChance;
@@ -775,24 +741,32 @@
           task.correctionUnsafe = false;
           try {
             const correctionFrame = syncInputProtection(task);
-            await sendCharacter(task, accidental);
-            await pauseAwareWait(task, task.options.fixPauseMs);
-            if (!isActive(task) || task.correctionUnsafe ||
-                !correctionFrameUnchanged(correctionFrame)) {
-              // A moved cursor could make Backspace erase the user's text.
-              if (isActive(task)) stop();
-              break;
+            task.correctionOriginalFrame = correctionFrame;
+            // In auto mode an explicit pre-dispatch iframe failure may
+            // switch to CDP. In that case sendCharacter inserts the correct
+            // character instead of the typo and we skip the correction.
+            await sendCharacter(task, accidental, character);
+            if (task.mode === "CDP") {
+              targetSent = true;
+            } else {
+              await pauseAwareWait(task, task.options.fixPauseMs);
+              if (!isActive(task) || task.correctionUnsafe ||
+                  !correctionFrameUnchanged(correctionFrame)) {
+                if (isActive(task)) stop();
+                break;
+              }
+              await sendBackspace(task, correctionFrame);
+              await pauseAwareWait(task, Math.min(250, task.options.fixPauseMs / 2));
+              if (!isActive(task) || task.correctionUnsafe ||
+                  !correctionFrameUnchanged(correctionFrame)) {
+                if (isActive(task)) stop();
+                break;
+              }
+              await sendCharacter(task, character);
+              targetSent = true;
             }
-            await sendBackspace(task, correctionFrame);
-            await pauseAwareWait(task, Math.min(250, task.options.fixPauseMs / 2));
-            if (!isActive(task) || task.correctionUnsafe ||
-                !correctionFrameUnchanged(correctionFrame)) {
-              if (isActive(task)) stop();
-              break;
-            }
-            await sendCharacter(task, character);
-            targetSent = true;
           } finally {
+            task.correctionOriginalFrame = null;
             task.correctionPending = false;
           }
         } else {
@@ -890,8 +864,8 @@
       chars: Array.from(text), index: 0, state: "running", stopped: false,
       paused: false, options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
-      correctionPending: false, correctionUnsafe: false, cdpBackspaceExpected: false,
-      cdpCorrectionFrame: null
+      correctionPending: false, correctionUnsafe: false,
+      correctionOriginalFrame: null
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

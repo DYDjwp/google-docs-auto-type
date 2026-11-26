@@ -79,8 +79,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         await insertCharacter(tabId, message.char);
         break;
       case "AT_BG_BACKSPACE":
-        await pressKey(tabId, "Backspace", 8);
-        break;
+        // Compatibility guard for old content scripts left open after update.
+        // Do not allow any tab-focused CDP destructive correction.
+        throw new Error("CDP Backspace is disabled to protect document content");
       case "AT_BG_DETACH":
         await detach(tabId);
         break;
