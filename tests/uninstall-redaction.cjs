@@ -39,7 +39,7 @@ test('Redactor does not alter normal bug descriptions and limits output length',
   assert.throws(()=>redactComment('x'.repeat(1501)),/Invalid feedback comment length/);
   assert.throws(()=>redactComment(null),/Invalid feedback/);
 });
-function makeHarness({loadFails=false,fetchFails=false,personal='Contact alice@example.com', reasons=['bugs']}={}) {
+function makeHarness({loadFails=false,fetchFails=false,personal='Contact alice@example.com', reasons=['bugs'],realRedactor=false}={}) {
   const nodes=new Map(),listeners={};
   const get=id=>{
     if(nodes.has(id))return nodes.get(id);
@@ -78,7 +78,7 @@ function makeHarness({loadFails=false,fetchFails=false,personal='Contact alice@e
   assert.notEqual(replaced,script);
   context.loadLocalPrivacyModule=async()=> {
     if(loadFails)throw Error('failed to load local module');
-    return mockModule;
+    return realRedactor ? getPrivacy() : mockModule;
   };
   vm.runInNewContext(replaced,context);
   return {
@@ -122,4 +122,30 @@ test('User cannot submit a blank form or overlength text',async()=>{
   const a=makeHarness({personal:' ',reasons:[]});await a.submit();assert.equal(a.requests.length,0);
   const b=makeHarness({personal:'x'.repeat(1501),reasons:['bugs']});
   await b.submit();assert.equal(b.requests.length,0);
+});
+
+test('P2: common US and Chinese phone numbers are redacted by the real module before POST',async()=>{
+  const samples=[
+    ['Please contact me at 415-555-0123.','415-555-0123'],
+    ['My phone is 4155550123.','4155550123'],
+    ['我的手机号是13800138000。','13800138000'],
+    ['Please call me at (415) 555-0123 when typing stops.','(415) 555-0123'],
+    ['联系电话：13800138000，打字失败','13800138000']
+  ];
+  for(const [message,phone] of samples){
+    const h=makeHarness({personal:message,realRedactor:true});
+    await h.submit();
+    assert.equal(h.requests.length,1,'request should send: '+message);
+    const body=h.requests[0].options.body;
+    assert.doesNotMatch(body.get('comment'),new RegExp(phone.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),'phone leaked: '+message);
+    assert.match(body.get('comment'),/REDACTED|PHONE|phone/i);
+    assert.equal(h.get('comment').value,message,'input must remain unchanged');
+  }
+});
+test('P2: a phone-like numeric ID without contact context is preserved',async()=>{
+  const {redactComment}=await getPrivacy();
+  const plain='Typing issue at 520 CPM after 10 characters, error code 4155550123.';
+  const result=redactComment(plain);
+  assert.match(result.comment,/520 CPM/);
+  assert.match(result.comment,/10 characters/);
 });
