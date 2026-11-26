@@ -17,3 +17,5 @@ jobs:
         run: |
           set -o pipefail
           timeout --signal=TERM 15s node --test tests/v1.0.4-stop-cleanup.cjs
+          timeout --signal=TERM 15s node --test tests/v1.0.3-cdp-and-draft-alert.cjs
+          timeout --signal=TERM 15s node --test tests/v1.0.4-config-token.cjs
