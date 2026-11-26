@@ -1,6 +1,6 @@
 # Auto Type
 
-**Automatic pause and resume:** Ordinary mouse movement and scrolling do not pause. Editor clicks or unlocked keyboard input can pause. Resume restores a confirmed UTF-16 Selection bookmark when the existing Annotated Text API is available; otherwise restore manually. Fix typo uses verified iframe replacement only; interruption cancels the task and may leave a temporary typo. No collaborative edit tracking or blind Backspace.
+**Automatic pause and resume:** Poll the actual logical Selection every 250 ms and before typing, without using pointer or keyboard events as pause triggers. Resume restores the saved Selection and verifies it; failure stops the task. The private Annotated Text API must be available for this feature. Fix typo remains model-confirmed iframe replacement and cancels on interruption. Separate document notifications can be disabled in Advanced Mode; this local preference is not included in AT1/JSON configuration exports.
 
 Auto Type is a Chrome extension for entering text into Google Docs at a configurable pace. It works with an editable document already open in the browser and uses Google Docs' internal text-input iframe to dispatch typing events.
 

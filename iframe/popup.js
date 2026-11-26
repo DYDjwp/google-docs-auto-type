@@ -25,6 +25,7 @@ const HAS_CDP = manifest.permissions.includes("debugger");
 const displayVersion = manifest.version_name || manifest.version;
 $("extensionVersion").textContent = displayVersion ? `v${displayVersion}` : "";
 let options = {...DEFAULTS};
+let notificationsEnabled = true;
 let activeTabId = null;
 let activeDocumentId = null;
 const documentIdFromUrl = url => /^https:\/\/docs\.google\.com\/document\/(?:u\/\d+\/)?d\/([^/?#]+)/.exec(url || "")?.[1] || null;
@@ -147,6 +148,7 @@ $("dismissDraftError").addEventListener("click", hideDraftSaveError);
 function renderOptions() {
   for (const key of FIELDS) $(key).value = options[key];
   for (const key of TOGGLES) $(key).checked = Boolean(options[key]);
+  $("notifications").checked = notificationsEnabled;
   for (const key of FEATURES) {
     const enabled = Boolean(options[key]);
     $(key).setAttribute("aria-pressed", String(enabled));
@@ -186,6 +188,7 @@ function syncStartButton() {
 }
 function syncConfigControls() {
   const blocked = !configReady || configBusy;
+  $("notifications").disabled = blocked;
   $("exportConfig").disabled = blocked;
   $("importConfig").disabled = blocked;
   $("configToken").disabled = blocked;
@@ -332,7 +335,7 @@ function renderStatus(status) {
   $("pause").disabled = !["paused", "running"].includes(state);
   $("stop").disabled = !["paused", "running"].includes(state);
   syncStartButton();
-  $("pause").textContent = status.restoring ? "Restoring…" : state === "paused" ? (status.manualResume ? "Resume manually" : "Resume") : "Pause";
+  $("pause").textContent = status.restoring ? "Restoring…" : state === "paused" ? "Resume" : "Pause";
   $("pause").disabled = $("pause").disabled || !!status.restoring;
   const messages = {
     idle: "Ready · Text will be typed into the current Google Doc",
@@ -385,7 +388,8 @@ async function showShortcutHints() {
 }
 
 async function init() {
-  const saved = await chrome.storage.local.get("autoTypeSettings");
+  const saved = await chrome.storage.local.get(["autoTypeSettings","autoTypeNotifications"]);
+  notificationsEnabled = saved.autoTypeNotifications !== false;
   if (saved.autoTypeSettings && typeof saved.autoTypeSettings === "object") {
     options = {...DEFAULTS, ...saved.autoTypeSettings};
   }
@@ -502,6 +506,13 @@ for (const key of ["mode", "deepRestAt", "enterStrategy"]) {
     await persist();
   });
 }
+$("notifications").addEventListener("change", async () => {
+  if (!configReady || configBusy) return;
+  const previous = notificationsEnabled;
+  notificationsEnabled = $("notifications").checked;
+  try {await chrome.storage.local.set({autoTypeNotifications:notificationsEnabled});}
+  catch {notificationsEnabled=previous;renderOptions();setMessage("Could not save notification preference","error");}
+});
 $("reset").addEventListener("click", async () => {
   if (!configReady || configBusy) return;
   options = {...DEFAULTS, advancedMode: true};
@@ -519,7 +530,7 @@ $("start").addEventListener("click", async () => {
       clearingDraft || starting || controlPending || configBusy) return;
   starting = true;
   ++statusRevision;
-  const startOptions = {...options};
+  const startOptions = {...options,notifications:notificationsEnabled};
   $("start").disabled = true;
   $("clearDraft").disabled = true;
   $("text").disabled = true;

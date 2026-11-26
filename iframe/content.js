@@ -6,6 +6,7 @@
   const HAS_CDP = chrome.runtime.getManifest().permissions.includes("debugger");
   let job = null;
   let overlay = null;
+  let noticeHost = null;
   const PRESETS = {slow: 180, medium: 300, fast: 520};
   const NEIGHBORS = {
     a:"sqwz", b:"vghn", c:"xdfv", d:"sferxc", e:"wrsd", f:"drtgvc", g:"ftyhbv",
@@ -48,7 +49,8 @@
       deepMaxMs: clamp(o.deepMaxMs ?? 3600, 0, 120000),
       keyboardLock: advancedMode && Boolean(o.keyboardLock),
       mouseLock: advancedMode && Boolean(o.mouseLock),
-      showOverlay: !advancedMode || o.showOverlay !== false
+      showOverlay: !advancedMode || o.showOverlay !== false,
+      notifications: o.notifications !== false
     };
   }
 
@@ -56,7 +58,7 @@
     if (!job) return {state: "idle", index: 0, total: 0, mode: "", error: "", readyToStart: true};
     return {
       state: job.state, index: job.index, total: job.chars.length,
-      mode: job.mode, error: job.error || "", pauseReason: job.pauseReason || "", notice: job.notice || "", manualResume: job.state === "paused" && !job.bookmark, restoring: !!job.restoring,
+      mode: job.mode, error: job.error || "", pauseReason: job.pauseReason || "", notice: job.notice || "", restoring: !!job.restoring,
       // "stopped", "done" and "error" may be reported while asynchronous
       // waits, debugger detach, and event-listener cleanup remain in flight.
       // Only a finalized task can safely be replaced with a new task.
@@ -308,19 +310,35 @@
     };
     overlay.status.textContent = (labels[status.state] || "preparing") + (status.notice && ["running","done"].includes(status.state) ? " · " + status.notice : "");
     overlay.fill.style.width = `${progress}%`;
-    overlay.toggle.textContent = status.restoring ? "Restoring…" : status.state === "paused" ? (status.manualResume ? "Resume manually" : "Resume") : "Pause";
+    overlay.toggle.textContent = status.restoring ? "Restoring…" : status.state === "paused" ? "Resume" : "Pause";
     overlay.toggle.disabled = status.restoring || !["paused", "running"].includes(status.state);
     overlay.stop.disabled = !["paused", "running"].includes(status.state);
     overlay.toggle.style.opacity = overlay.toggle.disabled ? ".45" : "1";
     overlay.stop.style.opacity = overlay.stop.disabled ? ".45" : "1";
   }
 
+  function showNotice(task, message) {
+    if (!task.options.notifications || !message || task.lastNotice === message || !document.createElement) return;
+    task.lastNotice = message;
+    try {
+      noticeHost?.remove();
+      const host = document.createElement("div");
+      host.id = "auto-type-notice-root";
+      host.style.cssText = "all:initial;position:fixed;top:24px;right:24px;z-index:2147483647";
+      const root = host.attachShadow({mode:"closed"});
+      root.innerHTML = `<style>:host{all:initial}.notice{box-sizing:border-box;width:320px;max-width:90vw;background:white;color:#202124;padding:16px;border:1px solid #dadce0;border-radius:12px;box-shadow:0 8px 32px #0003;font:14px/1.5 system-ui}.title{font-weight:650}.message{margin:8px 0 12px;overflow-wrap:anywhere}button{font:inherit;border:1px solid #dadce0;border-radius:6px;background:#fff;padding:5px 12px;cursor:pointer}</style><div class="notice" role="alert"><div class="title">Auto Type</div><div class="message" id="message"></div><button id="dismiss">Dismiss</button></div>`;
+      root.querySelector("#message").textContent = message;
+      root.querySelector("#dismiss").addEventListener("mousedown", e=>e.preventDefault());
+      root.querySelector("#dismiss").addEventListener("click",()=>{host.remove();if(noticeHost===host)noticeHost=null;});
+      (document.body || document.documentElement).append(host);
+      noticeHost = host;
+    } catch (error) {console.warn("[Auto Type] Notice could not be displayed",error);}
+  }
   function isOverlayEvent(event) {
-    const host = overlay?.host;
-    return Boolean(host?.isConnected && (
+    return [overlay?.host,noticeHost].some(host=>Boolean(host?.isConnected && (
       event.composedPath?.().includes(host) || event.target === host ||
       (event.target?.nodeType && host.contains?.(event.target))
-    ));
+    )));
   }
 
   const validSelection = s => s && Number.isInteger(s.start) && Number.isInteger(s.end) &&
@@ -344,101 +362,7 @@
     if (task.guard || task.state !== "running") return;
     const watched = new Set();
     let closed = false, frame = null, timer, observer;
-    let innerDoc = null, innerWindow = null, gesture = null;
-    const editorSelector = ".kix-page, .kix-page-content-wrapper, .kix-canvas-tile-content, .kix-appview-editor, .kix-zoomdocumentplugin-outer, iframe.docs-texteventtarget-iframe";
-    const chromeSelector = ".docs-toolbar, .docs-titlebar, .docs-menubar, .kix-ruler, .docs-sidebar, [role=menu], [role=dialog], [role=scrollbar]";
-    const isEditorChrome = event => Boolean(event.target?.closest?.(chromeSelector) ||
-      event.composedPath?.().some(node=>node?.matches?.(chromeSelector)));
-    const inEditor = event => {
-      if (event.currentTarget && (event.currentTarget === innerDoc || event.currentTarget === innerWindow)) return true;
-      if (event.target?.ownerDocument && event.target.ownerDocument === innerDoc) return true;
-      const path = event.composedPath?.() || [];
-      if (event.target?.closest?.(chromeSelector) || path.some(node => node?.matches?.(chromeSelector))) return false;
-      if (event.target?.closest?.(editorSelector) || path.some(node => node?.matches?.(editorSelector))) return true;
-      if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return false;
-      const hit = document.elementFromPoint?.(event.clientX,event.clientY);
-      if (hit?.closest?.(chromeSelector)) return false;
-      if (hit?.closest?.(editorSelector)) return true;
-      return [...(document.querySelectorAll?.(".kix-page, .kix-page-content-wrapper") || [])].some(page => {
-        const r = page.getBoundingClientRect();
-        return r.width > 0 && r.height > 0 && event.clientX >= r.left && event.clientX <= r.right &&
-          event.clientY >= r.top && event.clientY <= r.bottom;
-      });
-    };
-    // Probe anchor.js fallback: a single actual caret, not the mouse cursor.
-    // Missing/ambiguous rectangles do not establish a changed caret.
-    const visualCaret = () => {
-      const visible = [...(document.querySelectorAll?.(".kix-cursor-caret") || [])]
-        .map(node=>({node,rect:node.getBoundingClientRect()}))
-        .filter(({rect})=>rect.height > 0 && Number.isFinite(rect.left) && Number.isFinite(rect.top));
-      if (visible.length !== 1) return null;
-      const {node,rect} = visible[0];
-      const page = node.closest?.(".kix-page");
-      const editor = document.querySelector(".kix-appview-editor");
-      const origin = (page || editor)?.getBoundingClientRect?.();
-      return {x:rect.left-(origin?.left||0)+(page?0:editor?.scrollLeft||0),
-        y:rect.top-(origin?.top||0)+(page?0:editor?.scrollTop||0)};
-    };
-    const clearGesture = g => {
-      if (gesture !== g) return;
-      gesture = null;
-      clearTimeout(g.timeout);
-      g.resolve();
-    };
-    const finishGesture = async g => {
-      if (closed || gesture !== g || g.finishing) return;
-      g.finishing = true;
-      clearTimeout(g.timeout);
-      // Docs may apply Selection after the click event, as in the Probe.
-      await new Promise(resolve => setTimeout(resolve, 80));
-      if (closed || gesture !== g) return;
-      if (g.visualBefore) {
-        const after = visualCaret();
-        if (after && (Math.abs(after.x-g.visualBefore.x)>2 || Math.abs(after.y-g.visualBefore.y)>2))
-          pause("Document caret moved");
-      } else {
-        const after = await readSelection();
-        if (closed || gesture !== g) return;
-        const before = g.before;
-        if (g.uncertain) {
-          if (before && after && !sameSelection(before,after)) pause("Document caret moved");
-        } else if (!g.reliable || !sameSelection(before,after)) {
-          pause(before && after && g.reliable ? "Document caret moved" : "Document caret may have moved");
-        }
-      }
-      clearGesture(g);
-    };
-    const beginGesture = (event,uncertain=false) => {
-      if (gesture) {
-        if (event.type === "mousedown" && !gesture.beforeReady) gesture.reliable = false;
-        if (!uncertain) gesture.uncertain = false;
-        return;
-      }
-      if (task.sending || task.correcting) {
-        if (!uncertain) pause("Document caret may have moved");
-        return;
-      }
-      const visualBefore = uncertain && !task.bookmark && event.type !== "click" ? visualCaret() : null;
-      if (uncertain && !task.bookmark && !visualBefore) return;
-      let resolve;
-      const done = new Promise(r => {resolve = r;});
-      const g = gesture = {done,resolve,before:task.bookmark,beforeReady:!!task.bookmark,
-        reliable:!!task.bookmark || event.type === "pointerdown",finishing:false,uncertain,visualBefore};
-      g.timeout = setTimeout(() => {
-        if (gesture === g && !closed) {
-          if (!g.uncertain) pause("Document caret may have moved");
-          clearGesture(g);
-        }
-      },1000);
-      if (g.beforeReady || g.visualBefore) return;
-      void readSelection().then(before => {
-        if (gesture !== g || closed) return;
-        g.before = before;
-        g.beforeReady = true;
-        if (before && g.reliable) {task.bookmark = before;task.selectionAvailable = true;}
-        if (!before) {pause("Document caret may have moved");clearGesture(g);}
-      });
-    };
+    let innerDoc = null, innerWindow = null;
     const swallow = event => {
       if (event.cancelable) event.preventDefault();
       event.stopImmediatePropagation();
@@ -448,29 +372,17 @@
           !event.isTrusted || isOverlayEvent(event)) return;
       const type = event.type;
       if (KEY_EVENTS.includes(type)) {
-        // Trusted CDP Enter cannot be distinguished from a real simultaneous Enter.
+        // Optional keyboard lock is independent from caret monitoring.
         if (task.mode === "CDP" && task.cdpKeyInFlight &&
             task.cdpKeyKind === "Enter" && (event.key === "Enter" || event.keyCode === 13)) return;
         if (task.options.keyboardLock) {
           swallow(event);
           if (type === "keydown" && event.key === "Escape") pause("Escape");
-        } else if (type === "keydown" && (inEditor(event) || (event.target && event.target === innerDoc?.activeElement))) {
-          pause("Manual keyboard input");
         }
         return;
       }
-      if (type === "pointermove" || type === "mousemove") {
-        if (task.options.mouseLock && event.buttons) swallow(event);
-        return; // Hover and ordinary mouse movement never pause.
-      }
-      if (task.options.mouseLock) { swallow(event); return; }
-      if (gesture && ["pointerup","mouseup","click"].includes(type)) {
-        void finishGesture(gesture);
-      } else if (["pointerdown","mousedown","click"].includes(type) && !isEditorChrome(event)) {
-        const editor = inEditor(event);
-        if (editor || task.bookmark || type !== "click") beginGesture(event,!editor);
-        if (type === "click" && gesture) void finishGesture(gesture);
-      }
+      if (task.options.mouseLock && (!["pointermove","mousemove"].includes(type) || event.buttons))
+        swallow(event);
     };
     const unwatch = node => {
       watched.delete(node);
@@ -503,7 +415,6 @@
     const close = () => {
       if (closed) return;
       closed = true;
-      if (gesture) clearGesture(gesture);
       task.guard = null;
       if (timer !== undefined) clearInterval(timer);
       observer?.disconnect();
@@ -513,9 +424,9 @@
     };
     const refresh = () => {
       try { sync(); }
-      catch (error) { console.warn("[Auto Type] Input guard refresh failed", error); pause("Input protection unavailable"); }
+      catch (error) { console.warn("[Auto Type] Input guard refresh failed", error); stop("Input protection unavailable"); }
     };
-    task.guard = {sync, close, pending: () => gesture?.done};
+    task.guard = {sync, close};
     try {
       sync();
       if (typeof MutationObserver === "function") {
@@ -530,7 +441,7 @@
         observer.observe(document.documentElement || document,
           {childList:true,subtree:true,attributes:true,attributeFilter:["src","class"]});
       }
-      timer = setInterval(refresh, 1000);
+      timer = setInterval(() => {refresh();void checkCaret(task);}, 250);
     } catch (error) { close(); throw error; }
   }
 
@@ -546,12 +457,29 @@
     return at === "sentence" ? sentence : at === "word" ? word : sentence || word;
   }
 
+  // Compare logical document offsets, never mouse or keyboard events.
+  // The same check runs during rests and immediately before the next input.
+  async function checkCaret(task) {
+    if (job !== task || task.state !== "running" || task.sending || task.correcting ||
+        task.restoring || !task.selectionAvailable || !task.bookmark) return true;
+    if (task.caretCheck) return task.caretCheck;
+    const expected = task.bookmark;
+    const pending = (async () => {
+      const actual = await readSelection();
+      if (job !== task || task.state !== "running" || task.sending || task.correcting ||
+          task.restoring || task.bookmark !== expected) return true;
+      if (!actual) {pause("Document caret could not be read");return false;}
+      if (!sameSelection(actual,expected)) {pause("Document caret moved");return false;}
+      return true;
+    })();
+    task.caretCheck = pending;
+    try {return await pending;} finally {if (task.caretCheck === pending)task.caretCheck=null;}
+  }
   async function waitForTurn(task) {
     while (isActive(task)) {
-      const pending = task.guard?.pending();
-      if (pending) {await pending;continue;}
       if (task.state === "paused") {await pauseAwareWait(task,0);continue;}
-      return true;
+      if (!await checkCaret(task)) continue;
+      if (task.state === "running") return true;
     }
     return false;
   }
@@ -590,10 +518,22 @@
     sent = true;
     return true;
     } finally {
-      if (sent && task.selectionAvailable && task.state === "running") {
-        const actual = await readSelection();
-        const expected = previous && {start:previous.start + character.length,end:previous.start + character.length};
-        if (task.state === "running") task.bookmark = sameSelection(actual,expected) ? actual : null;
+      if (sent && task.selectionAvailable && previous && isActive(task)) {
+        const expected = {start:previous.start + character.length,end:previous.start + character.length};
+        // Docs may apply the keystroke asynchronously. Accept only the
+        // expected forward offset; never adopt a manually moved caret.
+        let actual = await readSelection();
+        for (let i=0;i<3 && isActive(task) && !sameSelection(actual,expected);i++) {
+          await new Promise(resolve=>setTimeout(resolve,40));
+          actual = await readSelection();
+        }
+        if (isActive(task)) {
+          if (sameSelection(actual,expected)) task.bookmark = expected;
+          else {
+            task.bookmark = null;
+            if (task.state === "running") pause("Input position could not be confirmed");
+          }
+        }
       }
       task.sending = false;
     }
@@ -605,11 +545,11 @@
       stop("Correction interrupted. A temporary typo may remain; review the document.");
       return;
     }
-    if (job.sending) job.bookmark = null;
     job.state = "paused";
     job.pauseReason = typeof reason === "string" ? reason : "";
-    if (!job.bookmark) job.pauseReason += (job.pauseReason ? " · " : "") +
-      "Restore the insertion point manually before Resume";
+    if (!job.bookmark && !job.sending) job.pauseReason += (job.pauseReason ? " · " : "") +
+      "Automatic caret restoration unavailable";
+    if (job.pauseReason) showNotice(job,job.pauseReason);
     job.guard?.close();
     updateOverlay();
     notifyBadge(job, true);
@@ -630,15 +570,16 @@
       notifyBadge(task, true);
     };
     if (task.sending) {
-      task.pauseReason = "Input still finishing. Check the document and Resume again.";
-      updateOverlay();
-      return;
+      task.pauseReason = "Input still finishing; restoring when ready.";
     }
-    if (!task.bookmark) { activate(); return; }
     task.restoring = true;
     updateOverlay();
     void (async () => {
       try {
+        while (task.sending && job === task && task.state === "paused")
+          await new Promise(resolve=>setTimeout(resolve,40));
+        if (job !== task || task.state !== "paused") return;
+        if (!task.bookmark) throw new Error("No confirmed bookmark");
         const answer = await bridgeRequest("restoreSelection", {selection:task.bookmark,sessionId:task.sessionId}, 1500);
         if (job !== task || task.state !== "paused") return;
         if (!answer.restored) throw new Error("Selection did not match");
@@ -646,8 +587,7 @@
       } catch {
         if (job === task && task.state === "paused") {
           void bridgeRequest("cancelOperation",{sessionId:task.sessionId},300).catch(()=>{});
-          task.bookmark = null;
-          task.pauseReason = "Automatic caret restoration failed. Restore manually, then Resume.";
+          stop("Automatic caret restoration failed. Review the document before starting a new task.");
         }
       } finally {
         task.restoring = false;
@@ -661,6 +601,7 @@
     job.error = typeof reason === "string" && reason ? reason :
       (job.correcting ? "Correction interrupted. A temporary typo may remain; review the document." : job.error);
     job.state = "stopped";
+    if (job.error) showNotice(job,job.error);
     job.guard?.close();
     updateOverlay();
     notifyBadge(job, true);
@@ -680,6 +621,7 @@
       }
       if (result.skipped && isActive(task)) {
         task.notice = "Fix typo skipped: model verification unavailable";
+        showNotice(task,task.notice);
         return false;
       }
       if (isActive(task)) stop("Correction not confirmed. Check the document before restarting.");
@@ -709,8 +651,13 @@
         const initial = await readSelection();
         if (task.state === "running") {task.bookmark = initial; task.selectionAvailable = !!initial;}
       }
-      if (task.options.fixTypo && (!task.selectionAvailable || task.mode !== "iframe"))
-        task.notice = "Fix typo unavailable in this input mode or document";
+      if (!task.selectionAvailable) {
+        task.notice = "Document Selection API unavailable. Automatic caret detection and recovery are unavailable.";
+        showNotice(task,task.notice);
+      } else if (task.options.fixTypo && task.mode !== "iframe") {
+        task.notice = "Fix typo unavailable in CDP mode";
+        showNotice(task,task.notice);
+      }
       if (task.options.showOverlay) ensureOverlay();
       else if (overlay?.host?.isConnected) overlay.host.remove();
       updateOverlay();
@@ -728,11 +675,7 @@
         const wantsFix = task.options.fixTypo && task.selectionAvailable && task.mode === "iframe" &&
           accidental && Math.random() * 100 < task.options.fixChance;
         if (!await waitForTurn(task)) break;
-        if (task.selectionAvailable && !task.bookmark) {
-          const current = await readSelection();
-          if (task.state === "running" && !task.guard?.pending()) task.bookmark = current;
-        }
-        if (!await waitForTurn(task)) break;
+        // Never rebase a lost bookmark onto an arbitrary current caret.
         let fixed = false;
         if (wantsFix && task.bookmark) {
           fixed = await fixCharacter(task,accidental,character);
@@ -782,7 +725,7 @@
       if (task.state !== "stopped") task.state = "done";
     } catch (error) {
       task.error = error?.message || String(error);
-      if (task.state !== "stopped") task.state = "error";
+      if (task.state !== "stopped") {task.state = "error";showNotice(task,task.error); }
       // Diagnostic metadata only; never log source text or typed characters.
       let frame = {present: false};
       try {
@@ -821,12 +764,13 @@
     const chars = Array.from(text);
     if (chars.length > 200000) return {ok: false, error: "Maximum 200,000 characters per session."};
     const options = normalize(message.options);
+    noticeHost?.remove();noticeHost=null;
     localWaitFallback = false;
     nextBackgroundProbeAt = 0;
     job = {
       chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, index: 0, state: "running", pauseReason: "", notice: "", options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
-      guard: null, sending: false, bookmark: null, selectionAvailable: false, correcting: false, restoring: false
+      guard: null, sending: false, bookmark: null, selectionAvailable: false, correcting: false, restoring: false, caretCheck:null, lastNotice:""
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

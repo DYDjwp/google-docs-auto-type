@@ -25,7 +25,7 @@
         </div>
       </div>
       <textarea id="text" spellcheck="false" placeholder="Paste your text here…"></textarea>
-      <p class="help">Paragraphs and blank lines are kept. Changing the document insertion point may pause typing. Resume restores a confirmed bookmark when available; otherwise restore the caret manually. Review the document after typing. Text is not uploaded.</p>
+      <p class="help">Paragraphs and blank lines are kept. Typing pauses when the document caret changes. Resume automatically restores a confirmed bookmark; if restoration fails, the task stops. Review the document after typing. Text is not uploaded.</p>
       <section id="draftError" class="draft-error" role="alert" aria-label="Draft save error" hidden>
         <p id="draftErrorText" class="draft-error-text"></p>
         <button id="dismissDraftError" type="button" aria-label="Dismiss draft save error">Dismiss</button>
@@ -107,6 +107,10 @@
         <label class="toggle-line option-row" for="mouseLock">
           <span><b>Mouse lock</b><small>Block clicks, dragging and scrolling while typing. Ordinary mouse movement stays free. Releases on pause / stop.</small></span>
           <span class="switch"><input id="mouseLock" type="checkbox"><span class="switch-track"></span></span>
+        </label>
+        <label class="toggle-line option-row" for="notifications">
+          <span><b>Notifications</b><small>Show separate document alerts even when floating controls are hidden.</small></span>
+          <span class="switch"><input id="notifications" type="checkbox" checked><span class="switch-track"></span></span>
         </label>
         <label class="toggle-line option-row" for="showOverlay">
           <span><b>Floating controls</b><small>Show the bottom-right pause / stop panel</small></span>
