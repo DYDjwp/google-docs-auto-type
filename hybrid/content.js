@@ -588,7 +588,10 @@
     const syncFrameImmediately = () => {
       try {
         const snapshot = syncInputProtection(task);
-        if (snapshot.frame && !watchedFrames.has(snapshot.frame)) {
+        // A real iframe is an EventTarget. Older test doubles can expose
+        // contentDocument without implementing frame event methods.
+        if (snapshot.frame && !watchedFrames.has(snapshot.frame) &&
+            typeof snapshot.frame.addEventListener === "function") {
           snapshot.frame.addEventListener("load", syncFrameImmediately, true);
           watchedFrames.add(snapshot.frame);
         }
