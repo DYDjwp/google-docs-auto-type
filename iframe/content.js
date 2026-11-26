@@ -378,11 +378,15 @@
         if (task.options.keyboardLock) {
           swallow(event);
           if (type === "keydown" && event.key === "Escape") pause("Escape");
+        } else if (type === "keydown" && task.legacyCorrecting) {
+          stop("Correction interrupted. A temporary typo may remain; review the document.");
         }
         return;
       }
       if (task.options.mouseLock && (!["pointermove","mousemove"].includes(type) || event.buttons))
         swallow(event);
+      else if (task.legacyCorrecting && ["pointerdown","mousedown"].includes(type))
+        stop("Correction interrupted. A temporary typo may remain; review the document.");
     };
     const unwatch = node => {
       watched.delete(node);
@@ -471,7 +475,15 @@
       if (!actual) {
         // A transient unavailable model is not evidence of movement. Stop only
         // after repeated failures, rather than firing a false movement alert.
-        if (++task.caretFailures >= 3) {pause("Document caret verification unavailable");return false;}
+        if (++task.caretFailures >= 3) {
+          // No change was observed, only loss of the experimental interface.
+          // Fall back to the stable typing lifecycle, without pretending to
+          // track the caret. Do not automatically rebase on a different caret.
+          task.selectionAvailable = false;
+          task.bookmark = null;
+          task.notice = "Selection API unavailable; using legacy typing behavior";
+          showNotice(task,task.notice);
+        }
         return true;
       }
       task.caretFailures=0;
@@ -553,7 +565,7 @@
     }
     job.state = "paused";
     job.pauseReason = typeof reason === "string" ? reason : "";
-    if (!job.bookmark && !job.sending) job.pauseReason += (job.pauseReason ? " · " : "") +
+    if (job.selectionAvailable && !job.bookmark && !job.sending) job.pauseReason += (job.pauseReason ? " · " : "") +
       "Automatic caret restoration unavailable";
     if (job.pauseReason) showNotice(job,job.pauseReason);
     job.guard?.close();
@@ -578,6 +590,7 @@
     if (task.sending) {
       task.pauseReason = "Input still finishing; restoring when ready.";
     }
+    if (!task.selectionAvailable) {activate();return;}
     task.restoring = true;
     updateOverlay();
     void (async () => {
@@ -612,6 +625,54 @@
     updateOverlay();
     notifyBadge(job, true);
   }
+  // Stable opt-in legacy correction. The editor acceptance cannot be
+  // established when the private API is missing. Keep the existing frame
+  // and interaction guards, never send Backspace via CDP or retry it.
+  function legacyFrame() {
+    const frame = document.querySelector("iframe.docs-texteventtarget-iframe");
+    try {return {frame,doc:frame?.contentDocument||null};}
+    catch {return {frame,doc:null};}
+  }
+  async function legacyFixCharacter(task,wrong,correct) {
+    if (!await waitForTurn(task)) return null;
+    if (task.mode !== "iframe") return false;
+    task.guard?.sync();
+    const initial=legacyFrame();
+    const unchanged=()=> {
+      const next=legacyFrame();
+      return initial.frame===next.frame && initial.doc===next.doc &&
+        (!initial.frame || !!initial.doc);
+    };
+    const active=()=>isActive(task) && task.state==="running" && unchanged();
+    task.correcting=true;
+    task.legacyCorrecting=true;
+    try {
+      if (!active()) {stop("Editor changed before correction");return null;}
+      try {await insertViaIframe(wrong,task.options.enterStrategy);}
+      catch(error) {
+        if (/Google Docs input (?:iframe|target) is unavailable/.test(error?.message||"") &&
+            task.options.mode!=="iframe" && HAS_CDP && active()) {
+          task.mode="CDP";return false;
+        }
+        throw error;
+      }
+      await pauseAwareWait(task,task.options.fixPauseMs);
+      if (!active()) {if(isActive(task))stop("Correction interrupted. Review the document.");return null;}
+      task.guard?.sync();
+      if (!active()) {if(isActive(task))stop("Correction interrupted. Review the document.");return null;}
+      await bridgeRequest("backspace");
+      await pauseAwareWait(task,Math.min(250,task.options.fixPauseMs/2));
+      if (!active()) {if(isActive(task))stop("Correction interrupted. Review the document.");return null;}
+      task.guard?.sync();
+      if (!active()) {if(isActive(task))stop("Correction interrupted. Review the document.");return null;}
+      await insertViaIframe(correct,task.options.enterStrategy);
+      return isActive(task)?true:null;
+    } catch(error) {
+      if(isActive(task))stop("Legacy correction interrupted: "+(error?.message||String(error))+". Review the document.");
+      return null;
+    } finally {task.legacyCorrecting=false;task.correcting=false;}
+  }
+
   async function fixCharacter(task, wrong, correct) {
     if (!await waitForTurn(task)) return null;
     if (!task.bookmark) return false;
@@ -626,7 +687,9 @@
         return true;
       }
       if (result.skipped && isActive(task)) {
-        task.notice = "Fix typo skipped: model verification unavailable";
+        // A selected range may be unsupported by the experimental correction
+        // even when Selection is readable. Do not issue a blind deletion.
+        task.notice = "Model correction skipped for the current selection";
         showNotice(task,task.notice);
         return false;
       }
@@ -658,10 +721,7 @@
         if (task.state === "running") {task.bookmark = initial; task.selectionAvailable = !!initial;}
       }
       if (!task.selectionAvailable) {
-        task.notice = "Document Selection API unavailable. Automatic caret detection and recovery are unavailable.";
-        showNotice(task,task.notice);
-      } else if (task.options.fixTypo && task.mode !== "iframe") {
-        task.notice = "Fix typo unavailable in CDP mode";
+        task.notice = "Selection API unavailable; using legacy typing behavior";
         showNotice(task,task.notice);
       }
       if (task.options.showOverlay) ensureOverlay();
@@ -678,13 +738,15 @@
 
         const character = task.chars[i];
         const accidental = wrongLetter(character);
-        const wantsFix = task.options.fixTypo && task.selectionAvailable && task.mode === "iframe" &&
+        const wantsFix = task.options.fixTypo && task.mode === "iframe" &&
           accidental && Math.random() * 100 < task.options.fixChance;
         if (!await waitForTurn(task)) break;
         // Never rebase a lost bookmark onto an arbitrary current caret.
         let fixed = false;
-        if (wantsFix && task.bookmark) {
-          fixed = await fixCharacter(task,accidental,character);
+        if (wantsFix) {
+          fixed = task.selectionAvailable
+            ? (task.bookmark ? await fixCharacter(task,accidental,character) : false)
+            : await legacyFixCharacter(task,accidental,character);
           if (fixed === null || !isActive(task)) break;
         }
         if (!fixed) {
@@ -776,7 +838,7 @@
     job = {
       chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, index: 0, state: "running", pauseReason: "", notice: "", options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
-      guard: null, sending: false, bookmark: null, selectionAvailable: false, correcting: false, restoring: false, caretCheck:null, caretFailures:0, lastNotice:""
+      guard: null, sending: false, bookmark: null, selectionAvailable: false, correcting: false, legacyCorrecting:false, restoring: false, caretCheck:null, caretFailures:0, lastNotice:""
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

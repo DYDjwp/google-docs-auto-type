@@ -1,9 +1,10 @@
-name: Validate Auto Type (v1.0.4-beta)
+name: Validate Auto Type (1.0.5 dev)
 
 on:
   push:
     branches:
       - main
+      - 'dev/**'
   pull_request:
 
 permissions:
@@ -21,8 +22,8 @@ jobs:
         run: |
           set -euo pipefail
           for edition in iframe hybrid; do
-            node -e "const m=require('./${edition}/manifest.json');if(m.version !== '1.0.4' || m.version_name !== '1.0.4-beta')process.exit(1)"
-            for script in background.js content.js main-bridge.js config-codec.js popup.js; do
+            node -e "const m=require('./${edition}/manifest.json');if(m.version !== '1.0.5' || m.version_name !== '1.0.5-dev')process.exit(1)"
+            for script in annotated-early.js background.js content.js main-bridge.js config-codec.js popup.js; do
               node --check "$edition/$script"
             done
           done

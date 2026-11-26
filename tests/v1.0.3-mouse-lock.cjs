@@ -329,7 +329,7 @@ test("Advanced popup exposes an off-by-default Mouse lock setting",()=>{
     assert.ok(html.indexOf('id="mouseLock"')>html.indexOf('id="advancedPanel"'));
     assert.match(script, /mouseLock: false/);
     assert.match(script, /const TOGGLES = \[[^\]]*"mouseLock"/);
-    assert.equal(JSON.parse(read(edition+"/manifest.json")).version_name,"1.0.4-beta");
+    assert.equal(JSON.parse(read(edition+"/manifest.json")).version_name,"1.0.5-dev");
   }
 });
 
@@ -478,15 +478,14 @@ for(const edition of ["iframe","hybrid"]){
     await h.finish();
     assert.equal(h.currentSelection.start,7);
   });
-  test(edition+" unavailable model never guesses a caret or permits unverified Resume",async()=>{
+  test(edition+" unavailable model falls back to original pause and Resume",async()=>{
     const h=makeHarness({edition,mouseLock:false,startDelay:0,selection:null});
     await h.start("ab");
     h.innerDoc.dispatchEvent(event("click",{editor:true}));h.pollFrames();await flush();
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
     h.send("AT_PAGE_PAUSE");h.send("AT_PAGE_RESUME");await flush();
-    assert.equal(h.send("AT_PAGE_STATUS").status.state,"stopped");
-    assert.match(h.send("AT_PAGE_STATUS").status.error,/Automatic caret restoration failed/);
-    await h.finish();assert.equal(h.edits.length,1);
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
+    await h.finish();assert.equal(h.edits.length,2);
   });
   for(const notifications of [true,false]){
     test(edition+" standalone notice respects notification preference ("+notifications+")",async()=>{

@@ -70,8 +70,8 @@ test("both editions register identical shortcut commands", () => {
   const iframe = JSON.parse(read("iframe/manifest.json"));
   const hybrid = JSON.parse(read("hybrid/manifest.json"));
   for (const manifest of [iframe, hybrid]) {
-    assert.equal(manifest.version, "1.0.4");
-    assert.equal(manifest.version_name, "1.0.4-beta");
+    assert.equal(manifest.version, "1.0.5");
+    assert.equal(manifest.version_name, "1.0.5-dev");
     assert.equal(manifest.commands["auto-type-toggle-pause"].suggested_key.default, "Alt+Shift+P");
     assert.equal(manifest.commands["auto-type-cancel"].suggested_key.default, "Alt+Shift+X");
   }
@@ -190,7 +190,7 @@ test("content script pause toggle is atomic and cancel stops current task", asyn
       showOverlay: false}
   }).ok, true);
   assert.equal(send("AT_PAGE_TOGGLE_PAUSE").status.state, "paused");
-  assert.equal(send("AT_PAGE_TOGGLE_PAUSE").status.state, "stopped");
+  assert.equal(send("AT_PAGE_TOGGLE_PAUSE").status.state, "running");
   assert.equal(send("AT_PAGE_STOP").status.state, "stopped");
   assert.equal(send("AT_PAGE_TOGGLE_PAUSE").status.state, "stopped");
   await flush();

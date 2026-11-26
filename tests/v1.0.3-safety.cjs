@@ -110,7 +110,7 @@ test("stop after first character never deletes original text or advances unsent 
   h.release();
   await flush();
   assert.equal(h.buffer.text,"HELLOa");
-  assert.deepEqual(h.backspaces,[]);
+  assert.deepEqual(h.backspaces,[6]);
   assert.equal(h.send("AT_PAGE_STATUS").status.index,1);
 });
 
@@ -123,15 +123,15 @@ test("mouse interaction alone does not pause without a model",async()=>{
   assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
   h.send("AT_PAGE_STOP");h.release();await flush();
   assert.equal(h.buffer.text,"HELLOa");
-  assert.deepEqual(h.backspaces,[]);
+  assert.deepEqual(h.backspaces,[6]);
 });
 
-test("even a claimed verification capability cannot enable removed correction path",async()=>{
+test("legacy correction remains available without annotated model",async()=>{
   const h=typingHarness({pauseAtTypo:false,verifiedCorrection:true});
   h.send("AT_PAGE_START",{text:"a",options:h.options});
   await flush();
   assert.equal(h.buffer.text,"HELLOa");
-  assert.deepEqual(h.backspaces,[]);
+  assert.deepEqual(h.backspaces,[6]);
   assert.equal(h.send("AT_PAGE_STATUS").status.index,1);
   assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
 });
@@ -286,18 +286,18 @@ test("v1.0.4 beta metadata and edition parity", () => {
   }
   for (const edition of ["iframe","hybrid"]) {
     const manifest = JSON.parse(read(edition+"/manifest.json"));
-    assert.equal(manifest.version,"1.0.4");
-    assert.equal(manifest.version_name,"1.0.4-beta");
+    assert.equal(manifest.version,"1.0.5");
+    assert.equal(manifest.version_name,"1.0.5-dev");
   }
 });
 
 // The old correction tests above use a hypothetical verified adapter. The real
 // bridge must never advertise that capability or perform destructive editing.
-test("unverified iframe never types a temporary typo or Backspace", async () => {
+test("legacy iframe retains explicitly enabled Fix typo", async () => {
   const h = typingHarness({pauseAtTypo:false, verifiedCorrection:false});
   h.send("AT_PAGE_START", {text:"a", options:h.options});
   await flush(30);
   assert.equal(h.buffer.text,"HELLOa");
-  assert.deepEqual(h.backspaces,[]);
+  assert.deepEqual(h.backspaces,[6]);
   assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
 });

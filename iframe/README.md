@@ -1,7 +1,9 @@
 # Auto Type — iframe edition
 
-**Automatic pause and resume:** Poll the actual logical Selection every 250 ms and before typing, without using pointer or keyboard events as pause triggers. Resume restores the saved Selection and verifies it; failure stops the task. The private Annotated Text API must be available for this feature. Fix typo remains model-confirmed iframe replacement and cancels on interruption. Separate document notifications can be disabled in Advanced Mode; this local preference is not included in AT1/JSON configuration exports.
-**Safety:** Model-confirmed replacement requires the existing Annotated Text API. CDP does not issue automatic Backspace. Reload Docs after updating.
+**Development branch: 1.0.5-dev.** Reload the unpacked extension and fully refresh Google Docs. `annotated-early.js` runs in MAIN at `document_start`. It preserves the flag from an authorized integration; deployment-specific initialization requires a Google-authorized extension ID. A late console assignment cannot activate the mode. The previously tested Probe may supply an existing flag when installed. With no usable interface, normal typing and original opt-in iframe Fix typo remain available. No third-party ID is embedded.
+
+**Automatic pause and resume:** Poll the actual logical Selection when the existing Annotated Text API is available, and restore the bookmark on Resume. Otherwise use the original legacy typing, pause/resume and optional iframe Fix typo behavior, without automatic caret tracking. Legacy correction cannot prove editor acceptance; review the resulting document. Notifications are independent and can be disabled in Advanced Mode.
+**Safety:** The model-aware correction is used when available. Legacy opt-in iframe correction remains available when it is not. CDP never performs automatic Backspace. Review the document.
 
 This is the iframe-only build of Auto Type. It enters text through Google Docs' internal input iframe and does not request Chrome's `debugger` permission.
 

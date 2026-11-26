@@ -79,7 +79,11 @@
   const equal = (a,b) => !!a && !!b && a.start === b.start && a.end === b.end;
   const valid = s => s && Number.isInteger(s.start) && Number.isInteger(s.end) &&
     s.start >= 0 && s.end >= s.start;
-  async function readSelection() {return selection(await annotated());}
+  async function readSelection() {
+    const api=await annotated();
+    if(typeof api?.getText!=="function" || typeof api?.setSelection!=="function" || typeof api?.getSelection!=="function") return null;
+    return selection(api);
+  }
   const currentFrame = () => document.querySelector("iframe.docs-texteventtarget-iframe")?.contentDocument;
   const locationKey = () => window.location?.pathname || "";
   async function perform(request, action) {
@@ -172,8 +176,12 @@
             throw new Error("Invalid Enter strategy");
           enter(request.strategy);
           break;
-        case "backspace":
-          throw new Error("Automatic Backspace is disabled: editor acceptance cannot be verified");
+        case "backspace": {
+          const target = getTarget();
+          legacyKey(target,"keydown","Backspace",8);
+          legacyKey(target,"keyup","Backspace",8);
+          break;
+        }
         default:
           throw new Error("Unknown bridge action");
       }

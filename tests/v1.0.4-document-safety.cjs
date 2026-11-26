@@ -63,7 +63,7 @@ test("legacy CDP inserts without session identity fail closed",async()=>{
   assert.equal(h.commands.length,0);
 });
 for(const edition of ["iframe","hybrid"]){
-  test(edition+" production bridge does not advertise verified correction and rejects Backspace",()=>{
+  test(edition+" production bridge offers legacy Backspace without claiming verified correction",()=>{
     let request, reply;const edits=[];
     const target={dispatchEvent:e=>edits.push(e)};
     const document={
@@ -77,8 +77,8 @@ for(const edition of ["iframe","hybrid"]){
     assert.equal(reply.ok,true);
     assert.equal(reply.verifiedCorrection,false);
     request({detail:JSON.stringify({id:2,action:"backspace"})});
-    assert.equal(reply.ok,false);
-    assert.equal(edits.length,0);
+    assert.equal(reply.ok,true);
+    assert.deepEqual(edits.map(e=>[e.type,e.key]),[["keydown","Backspace"],["keyup","Backspace"]]);
   });
 }
 
