@@ -71,7 +71,7 @@ The core implementation was written by AI under human direction and has not unde
 
 ## Experimental caret support
 
-This branch tests automatic caret detection and restoration through Google Docs' private Annotated Text API. It uses the original input behavior when the API is unavailable. An authorized Annotated Canvas integration must initialize before Docs loads; reload the document after installing the development build. Independent notifications can be configured in Advanced mode.
+This branch tests automatic caret detection and restoration through Google Docs' private Annotated Text API. It uses the original input behavior when the API is unavailable. The development build attempts early initialization with its own extension ID and preserves an existing integration flag. Google Docs may reject the ID. Reload the document after installing the development build, click inside the document, then use Advanced mode → Check caret support. Independent notifications can be configured in Advanced mode.
 
 ## License
 

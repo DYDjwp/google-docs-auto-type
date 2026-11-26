@@ -196,3 +196,41 @@ test("dev annotation hook runs in MAIN at document_start without replacing an ex
     assert.equal(window._docs_annotate_canvas_by_ext,"existing-authorization");
   }
 });
+
+for (const edition of ["iframe","hybrid"]) {
+  for (const reversed of [false,true]) {
+    test(edition+" document-start identity handshake supports either injection order ("+reversed+")",()=>{
+      const document=new EventTarget();
+      const window={};
+      const id="abcdefghijklmnopabcdefghijklmnop";
+      const scripts=["annotated-early.js","annotated-identity.js"];
+      if(reversed)scripts.reverse();
+      for(const file of scripts)vm.runInNewContext(read(edition+"/"+file),{
+        document,window,chrome:{runtime:{id}},Event,CustomEvent
+      });
+      assert.equal(window._docs_annotate_canvas_by_ext,id);
+      document.dispatchEvent(new Event("DOMContentLoaded"));
+      document.dispatchEvent(new CustomEvent("__auto_type_annotation_id_response__",{detail:"p".repeat(32)}));
+      assert.equal(window._docs_annotate_canvas_by_ext,id);
+    });
+  }
+  test(edition+" early identity script does not overwrite existing integration flag",()=>{
+    const document=new EventTarget(), window={_docs_annotate_canvas_by_ext:"existing"};
+    for(const file of ["annotated-early.js","annotated-identity.js"])vm.runInNewContext(read(edition+"/"+file),{
+      document,window,chrome:{runtime:{id:"a".repeat(32)}},Event,CustomEvent
+    });
+    assert.equal(window._docs_annotate_canvas_by_ext,"existing");
+    const manifest=JSON.parse(read(edition+"/manifest.json"));
+    const identity=manifest.content_scripts.find(s=>s.js.includes("annotated-identity.js"));
+    assert.equal(identity.world,"ISOLATED");assert.equal(identity.run_at,"document_start");
+  });
+  test(edition+" capability diagnostic reports actual API availability without returning text",async()=>{
+    const h=modelBridge(edition);
+    const result=await h.send("annotationStatus");
+    assert.deepEqual(result.annotation,{flagPresent:true,accessorPresent:true,available:true,reason:"ready"});
+    assert.deepEqual(h.edits,[]);
+    assert.equal(h.buffer.text,"HELLO WORLD");
+    const absent=modelBridge(edition,{available:false});
+    assert.deepEqual((await absent.send("annotationStatus")).annotation,{flagPresent:false,accessorPresent:false,available:false,reason:"flag-missing"});
+  });
+}

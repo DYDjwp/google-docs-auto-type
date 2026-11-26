@@ -79,10 +79,27 @@
   const equal = (a,b) => !!a && !!b && a.start === b.start && a.end === b.end;
   const valid = s => s && Number.isInteger(s.start) && Number.isInteger(s.end) &&
     s.start >= 0 && s.end >= s.start;
+  function modelMethods(api) {
+    return typeof api?.getText==="function" && typeof api?.setSelection==="function" &&
+      typeof api?.getSelection==="function";
+  }
   async function readSelection() {
     const api=await annotated();
-    if(typeof api?.getText!=="function" || typeof api?.setSelection!=="function" || typeof api?.getSelection!=="function") return null;
-    return selection(api);
+    return modelMethods(api) ? selection(api) : null;
+  }
+  // Report capability only, never document content or offsets.
+  async function annotationStatus() {
+    const flagPresent=Boolean(window._docs_annotate_canvas_by_ext);
+    const accessorPresent=typeof window._docs_annotate_getAnnotatedText==="function";
+    const base={flagPresent,accessorPresent,available:false};
+    if (!flagPresent) return {...base,reason:"flag-missing"};
+    if (!accessorPresent) return {...base,reason:"accessor-missing"};
+    try {
+      const api=await annotated();
+      if (!modelMethods(api)) return {...base,reason:"methods-unavailable"};
+      if (!selection(api)) return {...base,reason:"selection-unavailable"};
+      return {...base,available:true,reason:"ready"};
+    } catch {return {...base,reason:"accessor-rejected"};}
   }
   const currentFrame = () => document.querySelector("iframe.docs-texteventtarget-iframe")?.contentDocument;
   const locationKey = () => window.location?.pathname || "";
@@ -107,7 +124,9 @@
       api.setSelection(wanted.start,wanted.end);
       await wait(90);
     }
-    return {restored:active() && equal(selection(api),wanted)};
+    if (!active()) return {restored:false};
+    const live=await annotated();
+    return {restored:active() && equal(selection(live),wanted)};
   }
   async function correct(request,active) {
     const {wrong,correct:character,delay} = request;
@@ -152,11 +171,12 @@
       if (!Number.isSafeInteger(request?.id)) throw new Error("Invalid request ID");
       if (request.action === "cancelOperation") {
         if (operation?.sessionId === request.sessionId) {operation.cancelled = true;operation = null;}
-      } else if (["selection","restoreSelection","correct"].includes(request.action)) {
+      } else if (["selection","annotationStatus","restoreSelection","correct"].includes(request.action)) {
         const respond = value => document.dispatchEvent(new CustomEvent(RESPONSE,{
           detail:JSON.stringify({id:request.id,ok:true,...value})
         }));
         const work=request.action === "selection" ? readSelection().then(selection=>({selection})) :
+          request.action === "annotationStatus" ? annotationStatus().then(annotation=>({annotation})) :
           perform(request,active=>request.action === "restoreSelection" ? restore(request,active) : correct(request,active));
         void work.then(respond,()=>respond(request.action === "selection" ? {selection:null} : {}));
         return;

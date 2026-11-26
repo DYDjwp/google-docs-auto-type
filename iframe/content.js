@@ -860,6 +860,11 @@
     }
     switch (message.type) {
       case "AT_PAGE_STATUS": respond({ok: true, status: getStatus()}); break;
+      case "AT_PAGE_ANNOTATION_STATUS":
+        void bridgeRequest("annotationStatus",{},1500).then(
+          result=>respond({ok:true,annotation:result.annotation}),
+          ()=>respond({ok:true,annotation:{available:false,reason:"bridge-unavailable"}}));
+        return true;
       case "AT_PAGE_CDP_VALIDATE":
         respond({ok: Boolean(job && isActive(job) && job.mode === "CDP" && job.sessionId === message.sessionId)});
         break;

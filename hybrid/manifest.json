@@ -48,6 +48,17 @@
         "https://docs.google.com/document/*"
       ],
       "js": [
+        "annotated-identity.js"
+      ],
+      "run_at": "document_start",
+      "world": "ISOLATED",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://docs.google.com/document/*"
+      ],
+      "js": [
         "content.js"
       ],
       "run_at": "document_idle"

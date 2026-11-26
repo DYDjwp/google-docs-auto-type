@@ -23,7 +23,7 @@ jobs:
           set -euo pipefail
           for edition in iframe hybrid; do
             node -e "const m=require('./${edition}/manifest.json');if(m.version !== '1.0.5' || m.version_name !== '1.0.5-dev')process.exit(1)"
-            for script in annotated-early.js background.js content.js main-bridge.js config-codec.js popup.js; do
+            for script in annotated-early.js annotated-identity.js background.js content.js main-bridge.js config-codec.js popup.js; do
               node --check "$edition/$script"
             done
           done

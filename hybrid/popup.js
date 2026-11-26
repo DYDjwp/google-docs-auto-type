@@ -339,7 +339,7 @@ function renderStatus(status) {
   $("pause").disabled = $("pause").disabled || !!status.restoring;
   const messages = {
     idle: "Ready · Text will be typed into the current Google Doc",
-    running: `Typing ${index}/${total} · ${mode || "preparing"}`,
+    running: `Typing ${index}/${total} · ${mode || "preparing"}${status.caretMode === "model" ? " · Caret tracking" : status.caretMode === "legacy" ? " · Legacy" : ""}`,
     paused: `Paused at ${index}/${total}${status.pauseReason ? " · " + status.pauseReason : ""}`,
     done: `Sent ${total} characters · Please verify the document`,
     stopped: `Stopped at ${index}/${total}${error ? " · " + error : ""}`,
@@ -524,6 +524,30 @@ $("reset").addEventListener("click", async () => {
   setMessage("Settings restored to defaults", "ok");
 });
 
+$("checkCaretSupport").addEventListener("click", async () => {
+  if (!activeTabId || starting || controlPending) return;
+  const button=$("checkCaretSupport"), output=$("caretSupportStatus");
+  const tabId=activeTabId;
+  button.disabled=true;
+  output.textContent="Checking…";
+  try {
+    await chrome.scripting.executeScript({target:{tabId},files:["main-bridge.js"],world:"MAIN"});
+    if (tabId!==activeTabId) return;
+    const response=await pageMessage("AT_PAGE_ANNOTATION_STATUS");
+    const a=response?.annotation;
+    const reasons={
+      "flag-missing":"Early initialization missing. Reload the Docs tab.",
+      "accessor-missing":"Docs did not expose the accessor. Reload and click the document, then check again.",
+      "methods-unavailable":"Docs did not return the required model methods.",
+      "selection-unavailable":"Click inside the document and check again.",
+      "accessor-rejected":"Docs rejected or failed the model request.",
+      "bridge-unavailable":"The page bridge did not respond."
+    };
+    output.textContent=a?.available ? "Available · automatic caret tracking and restoration" :
+      "Legacy mode · "+(reasons[a?.reason]||"Model unavailable.");
+  } catch(error) {output.textContent="Legacy mode · "+(error?.message||"Could not check support.");}
+  finally {button.disabled=false;}
+});
 $("start").addEventListener("click", async () => {
   const text = $("text").value;
   if (!text.trim()) { setMessage("Paste some text first", "error"); return; }
