@@ -96,7 +96,7 @@ function makeHarness({
       if (["type", "backspace", "enter"].includes(request.action)) edits.push(request);
       queueMicrotask(() => document.dispatchEvent({
         type: "__auto_type_main_response_v3__",
-        detail: JSON.stringify({id: request.id, ok: true})
+        detail: JSON.stringify({id: request.id, ok: true, verifiedCorrection:true})
       }));
     }
     return realDispatch(payload);

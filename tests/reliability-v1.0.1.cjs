@@ -39,7 +39,7 @@ function popupHarness({deferredLoad = false} = {}) {
   };
   get("clearDraft").disabled = true;
   const windowEvents = new Map();
-  const stored = new Map([["autoTypeDraft:17", "Saved draft"]]);
+  const stored = new Map([["autoTypeDraft:17:demo", "Saved draft"]]);
   const writes = [];
   const removals = [];
   let resolveDraftRead = null;
@@ -76,7 +76,7 @@ function popupHarness({deferredLoad = false} = {}) {
   return {
     get, stored, writes, removals,
     pagehide: () => { windowEvents.get("pagehide")(); windowEvents.get("unload")?.(); },
-    resolveLoad: () => resolveDraftRead?.({"autoTypeDraft:17": stored.get("autoTypeDraft:17")}),
+    resolveLoad: () => resolveDraftRead?.({"autoTypeDraft:17:demo": stored.get("autoTypeDraft:17:demo")}),
     canResolveLoad: () => Boolean(resolveDraftRead)
   };
 }
@@ -88,7 +88,7 @@ test("closing during initial draft read never overwrites the saved text", async 
   h.pagehide();
   h.resolveLoad();
   await tick();
-  assert.equal(h.stored.get("autoTypeDraft:17"), "Saved draft");
+  assert.equal(h.stored.get("autoTypeDraft:17:demo"), "Saved draft");
   assert.equal(h.writes.length, 0);
 });
 
@@ -98,7 +98,7 @@ test("closing without editing a restored draft never writes an empty text area",
   assert.equal(h.get("text").value, "Saved draft");
   h.pagehide();
   await tick();
-  assert.equal(h.stored.get("autoTypeDraft:17"), "Saved draft");
+  assert.equal(h.stored.get("autoTypeDraft:17:demo"), "Saved draft");
   assert.equal(h.writes.length, 0);
 });
 
@@ -110,11 +110,11 @@ test("Clear draft empties the input and storage without pagehide resurrection", 
   await h.get("text").fire("input");
   await h.get("clearDraft").fire("click");
   assert.equal(h.get("text").value, "");
-  assert.equal(h.stored.has("autoTypeDraft:17"), false);
+  assert.equal(h.stored.has("autoTypeDraft:17:demo"), false);
   assert.equal(h.removals.length, 1);
   h.pagehide();
   await tick();
-  assert.equal(h.stored.has("autoTypeDraft:17"), false);
+  assert.equal(h.stored.has("autoTypeDraft:17:demo"), false);
 });
 
 test("both editions use the same popup and lifecycle code", () => {

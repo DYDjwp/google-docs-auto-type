@@ -18,10 +18,17 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 const attachedTabs = new Set();
 const pendingAttach = new Map();
+const pendingDetach = new Map();
+const generations = new Map();
+const owners = new Map();
+const generation = tabId => generations.get(tabId) || 0;
+const invalidate = tabId => generations.set(tabId, generation(tabId) + 1);
+const documentKey = url => /^https:\/\/docs\.google\.com\/document\/(?:u\/\d+\/)?d\/([^/?#]+)/.exec(url || "")?.[1] || null;
 const isDocs = url => /^https:\/\/docs\.google\.com\/document\//.test(url || "");
 
 async function attach(tabId) {
   if (!HAS_CDP) throw new Error("CDP is unavailable in the iframe-only build");
+  if (pendingDetach.has(tabId)) await pendingDetach.get(tabId);
   if (attachedTabs.has(tabId)) return;
   if (pendingAttach.has(tabId)) return pendingAttach.get(tabId);
   const promise = (async () => {
@@ -40,23 +47,50 @@ async function detach(tabId) {
   if (pendingAttach.has(tabId)) {
     try { await pendingAttach.get(tabId); } catch { /* Not attached. */ }
   }
+  if (pendingDetach.has(tabId)) return pendingDetach.get(tabId);
   if (!attachedTabs.delete(tabId)) return;
-  try { await chrome.debugger.detach({tabId}); }
-  catch { /* The tab or debugger has already closed. */ }
+  const promise = (async () => {
+    try { await chrome.debugger.detach({tabId}); }
+    catch { /* The tab or debugger has already closed. */ }
+  })();
+  pendingDetach.set(tabId, promise);
+  try { await promise; }
+  finally { pendingDetach.delete(tabId); }
 }
 
-async function pressKey(tabId, key, keyCode) {
+async function insertCharacter(tabId, char, sender, sessionId) {
+  if (sender.frameId !== 0 || !sender.documentId || typeof sessionId !== "string" || !sessionId)
+    throw new Error("CDP requires a current document session; reload Google Docs");
+  const key = documentKey(sender.url || sender.tab?.url);
+  if (!key) throw new Error("No Google Docs document");
+  const epoch = generation(tabId);
+  const owner = sender.documentId + ":" + sessionId;
+  const validate = async () => {
+    const tab = await chrome.tabs.get(tabId);
+    if (documentKey(tab.url) !== key || generation(tabId) !== epoch)
+      throw new Error("Google Docs document changed");
+    // Target the exact originating document, not whichever script is now in this tab.
+    const result = await chrome.tabs.sendMessage(tabId, {type:"AT_PAGE_CDP_VALIDATE", sessionId},
+      {documentId:sender.documentId});
+    if (!result?.ok || generation(tabId) !== epoch || owners.get(tabId) !== owner)
+      throw new Error("CDP typing session is no longer active");
+  };
+  const current = owners.get(tabId);
+  if (current && current !== owner) throw new Error("Another CDP session owns this tab");
+  owners.set(tabId, owner);
+  await validate();
   await attach(tabId);
+  await validate();
+  // No additional awaited operation between validation and dispatch.
   const target = {tabId};
-  const base = {key, code: key, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode};
-  await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {type: "keyDown", ...base});
-  await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {type: "keyUp", ...base});
-}
-
-async function insertCharacter(tabId, char) {
-  if (char === "\n") return pressKey(tabId, "Enter", 13);
-  await attach(tabId);
-  await chrome.debugger.sendCommand({tabId}, "Input.insertText", {text: char});
+  if (char === "\n") {
+    const base = {key:"Enter", code:"Enter", windowsVirtualKeyCode:13, nativeVirtualKeyCode:13};
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {type:"keyDown", ...base});
+    await validate();
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", {type:"keyUp", ...base});
+  } else {
+    await chrome.debugger.sendCommand(target, "Input.insertText", {text:char});
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
@@ -76,14 +110,18 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case "AT_BG_INSERT":
         if (typeof message.char !== "string" || [...message.char].length !== 1)
           throw new Error("Expected one character");
-        await insertCharacter(tabId, message.char);
+        await insertCharacter(tabId, message.char, sender, message.sessionId);
         break;
       case "AT_BG_BACKSPACE":
         // Compatibility guard for old content scripts left open after update.
         // Do not allow any tab-focused CDP destructive correction.
         throw new Error("CDP Backspace is disabled to protect document content");
       case "AT_BG_DETACH":
-        await detach(tabId);
+        if (owners.get(tabId) === sender.documentId + ":" + message.sessionId) {
+          owners.delete(tabId);
+          invalidate(tabId);
+          await detach(tabId);
+        }
         break;
       case "AT_BG_WAIT": {
         // Keep pacing independent of the Docs tab's background timer budget.
@@ -106,13 +144,17 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 });
 
 if (HAS_CDP) {
-  chrome.debugger.onDetach.addListener(({tabId}) => attachedTabs.delete(tabId));
+  chrome.debugger.onDetach.addListener(({tabId}) => { attachedTabs.delete(tabId); });
   chrome.tabs.onRemoved.addListener(tabId => {
+    invalidate(tabId);
+    owners.delete(tabId);
     attachedTabs.delete(tabId);
     pendingAttach.delete(tabId);
   });
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === "loading" || (changeInfo.url && !isDocs(changeInfo.url))) {
+    if (changeInfo.status === "loading" || changeInfo.url) {
+      invalidate(tabId);
+      owners.delete(tabId);
       void detach(tabId);
     }
   });
@@ -123,8 +165,12 @@ if (HAS_CDP) {
 // level in both editions, not only when Chrome debugger permission exists.
 const draftKeyForTab = tabId => `autoTypeDraft:${tabId}`;
 chrome.tabs.onRemoved.addListener(tabId => {
-  void chrome.storage.session.remove(draftKeyForTab(tabId))
-    .catch(error => console.warn("[Auto Type] Draft cleanup failed for closed tab", tabId, error));
+  void (async () => {
+    const prefix = draftKeyForTab(tabId);
+    const stored = await chrome.storage.session.get(null);
+    const keys = Object.keys(stored).filter(key => key === prefix || key.startsWith(prefix + ":"));
+    if (keys.length) await chrome.storage.session.remove(keys);
+  })().catch(error => console.warn("[Auto Type] Draft cleanup failed for closed tab", tabId, error));
 });
 
 // Browser-level shortcuts work even when the popup is closed and while Docs

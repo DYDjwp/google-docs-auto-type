@@ -56,7 +56,7 @@ function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBac
             ? {id: req.id, ok: false, error: "Google Docs input target is unavailable"}
             : {id: req.id, ok: true};
         queueMicrotask(() => document.dispatchEvent(new FakeEvent("__auto_type_main_response_v3__", {
-          detail: JSON.stringify(reply)
+          detail: JSON.stringify({...reply, verifiedCorrection:true})
         })));
       }
       for (const callback of [...(handlers.get(event.type) || [])]) {
@@ -216,7 +216,7 @@ function makePopupHarness({holdSave=false, edition="iframe", manifest={permissio
   let statusReads=0, releaseStatus;
   let pageState=initialPageState, cleanupReady=!holdCleanup;
   const intervals=[];
-  const storage = new Map([["autoTypeDraft:17","Saved"],["autoTypeDraft:99","Old"]]);
+  const storage = new Map([["autoTypeDraft:17:xyz","Saved"],["autoTypeDraft:99","Old"]]);
   const chrome = {
     runtime:{getManifest:()=>manifest},
     commands:{getAll:async()=>[]},
@@ -328,7 +328,7 @@ test("P2: successful retry clears previous draft warning",async()=>{
   assert.equal(h.started,1);
   assert.equal(h.closed,true);
   assert.equal(h.get("draftError").hidden,true);
-  assert.equal(h.storage.get("autoTypeDraft:17"),"Important");
+  assert.equal(h.storage.get("autoTypeDraft:17:xyz"),"Important");
 });
 
 test("both extension editions share the same CDP guard and popup alert",()=>{
@@ -428,14 +428,14 @@ for(const edition of ["iframe","hybrid"]){
     assert.equal(h.get("draftError").hidden,false);
     h.setCanSave(true);
     await h.edit("Newest draft");
-    assert.equal(h.storage.get("autoTypeDraft:17"),"Newest draft");
+    assert.equal(h.storage.get("autoTypeDraft:17:xyz"),"Newest draft");
     assert.equal(h.get("draftError").hidden,true);
   });
   test(edition + ": autosave recovers by reclaiming closed-tab drafts without Start",async()=>{
     const h=makePopupHarness({edition,recoverOnCleanup:true});
     await h.ready();
     await h.edit("Recovered draft");
-    assert.equal(h.storage.get("autoTypeDraft:17"),"Recovered draft");
+    assert.equal(h.storage.get("autoTypeDraft:17:xyz"),"Recovered draft");
     assert.equal(h.storage.has("autoTypeDraft:99"),false);
     assert.equal(h.get("draftError").hidden,true);
     assert.equal(h.started,0);
@@ -449,7 +449,7 @@ for(const edition of ["iframe","hybrid"]){
     const clear=h.get("clearDraft").fire("click");
     h.releaseSave();
     await Promise.all([edit,clear]);
-    assert.equal(h.storage.has("autoTypeDraft:17"),false);
+    assert.equal(h.storage.has("autoTypeDraft:17:xyz"),false);
     assert.equal(h.get("text").value,"");
   });
 }

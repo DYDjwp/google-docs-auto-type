@@ -1,5 +1,7 @@
 # Auto Type — iframe edition
 
+**Safety:** Automatic typo correction is temporarily disabled because the Google Docs iframe cannot verify character acceptance. Configuration fields remain compatible.
+
 This is the iframe-only build of Auto Type. It enters text through Google Docs' internal input iframe and does not request Chrome's `debugger` permission.
 
 ## Version 1.0.4-beta

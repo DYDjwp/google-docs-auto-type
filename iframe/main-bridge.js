@@ -59,12 +59,6 @@
     legacyKey(target, "keyup", "Enter", 13);
   }
 
-  function backspace() {
-    const target = getTarget();
-    legacyKey(target, "keydown", "Backspace", 8);
-    legacyKey(target, "keyup", "Backspace", 8);
-  }
-
   document.addEventListener(REQUEST, event => {
     let request;
     let result = {ok: false, error: "Invalid bridge request"};
@@ -86,12 +80,11 @@
           enter(request.strategy);
           break;
         case "backspace":
-          backspace();
-          break;
+          throw new Error("Automatic Backspace is disabled: editor acceptance cannot be verified");
         default:
           throw new Error("Unknown bridge action");
       }
-      result = {ok: true};
+      result = {ok: true, verifiedCorrection: false};
     } catch (error) {
       result = {ok: false, error: error?.message || String(error)};
     }

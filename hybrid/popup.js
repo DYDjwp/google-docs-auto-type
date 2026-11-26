@@ -26,6 +26,9 @@ const displayVersion = manifest.version_name || manifest.version;
 $("extensionVersion").textContent = displayVersion ? `v${displayVersion}` : "";
 let options = {...DEFAULTS};
 let activeTabId = null;
+let activeDocumentId = null;
+const documentIdFromUrl = url => /^https:\/\/docs\.google\.com\/document\/(?:u\/\d+\/)?d\/([^/?#]+)/.exec(url || "")?.[1] || null;
+const normalizedText = text => text.replace(/\r\n?/g, "\n").replace(/\t/g, "    ");
 let currentState = "idle";
 let currentReadyToStart = false; // Waiting for the first authoritative page status.
 let timer = null;
@@ -46,7 +49,7 @@ let draftLoaded = false;
 let clearingDraft = false;
 let starting = false;
 let popupClosing = false;
-function draftKey() { return activeTabId ? `autoTypeDraft:${activeTabId}` : null; }
+function draftKey() { return activeTabId && activeDocumentId ? `autoTypeDraft:${activeTabId}:${activeDocumentId}` : null; }
 function saveDraft(value, revision = draftRevision) {
   const key = draftKey();
   if (!key) return Promise.resolve();
@@ -79,7 +82,7 @@ function removeDraft() {
   return draftSaveTail;
 }
 function updateTextCount() {
-  const value = $("text").value;
+  const value = normalizedText($("text").value);
   const lines = value.split("\n").length;
   $("count").textContent = `${Array.from(value).length.toLocaleString()} chars · ${lines} ${lines === 1 ? "line" : "lines"}`;
 }
@@ -93,7 +96,7 @@ async function reclaimClosedTabDrafts() {
   ]);
   const live = new Set(tabs.map(tab => tab.id));
   const stale = Object.keys(stored).filter(key => {
-    const match = /^autoTypeDraft:(\d+)$/.exec(key);
+    const match = /^autoTypeDraft:(\d+)(?::[^:]+)?$/.exec(key);
     return match && !live.has(Number(match[1]));
   });
   if (stale.length) await chrome.storage.session.remove(stale);
@@ -145,8 +148,9 @@ function renderOptions() {
   for (const key of FIELDS) $(key).value = options[key];
   for (const key of TOGGLES) $(key).checked = Boolean(options[key]);
   for (const key of FEATURES) {
-    $(key).setAttribute("aria-pressed", String(Boolean(options[key])));
-    $(key).classList.toggle("selected", Boolean(options[key]));
+    const enabled = key !== "fixTypo" && Boolean(options[key]);
+    $(key).setAttribute("aria-pressed", String(enabled));
+    $(key).classList.toggle("selected", enabled);
   }
   $("modeRow").hidden = !HAS_CDP;
   $("mode").value = HAS_CDP ? options.mode : "iframe";
@@ -192,7 +196,7 @@ function syncConfigControls() {
   // Disable every setting control until initial storage retrieval finishes.
   // Event guards below also block synthetic events during that async window.
   for (const key of [...FIELDS, ...TOGGLES, ...FEATURES, "mode", "deepRestAt", "enterStrategy", "reset"])
-    $(key).disabled = blocked;
+    $(key).disabled = blocked || ["fixTypo", "fixChance", "fixPauseMs"].includes(key);
   for (const button of document.querySelectorAll(".speed")) button.disabled = blocked;
   syncStartButton();
 }
@@ -306,7 +310,7 @@ function sanitize(key, value) {
 
 async function pageMessage(type, data = {}) {
   if (!activeTabId) throw new Error("No Google Docs tab found");
-  const payload = {type, ...data};
+  const payload = {type, documentId: activeDocumentId, ...data};
   try { return await chrome.tabs.sendMessage(activeTabId, payload); }
   catch (error) {
     if (!String(error).includes("Receiving end")) throw error;
@@ -354,10 +358,14 @@ async function refresh() {
   const revision = ++statusRevision;
   try {
     const answer = await pageMessage("AT_PAGE_STATUS");
-    if (!popupClosing && revision === statusRevision && answer?.ok) renderStatus(answer.status);
+    if (!answer?.ok || !answer.status) throw new Error(answer?.error || "No document status");
+    if (!popupClosing && revision === statusRevision) renderStatus(answer.status);
   } catch (e) {
-    if (!popupClosing && revision === statusRevision)
+    if (!popupClosing && revision === statusRevision) {
+      currentReadyToStart = false;
+      syncStartButton();
       setMessage(`Cannot connect to the document: ${e.message}`, "error");
+    }
   }
 }
 
@@ -391,7 +399,8 @@ async function init() {
   syncConfigControls();
   void showShortcutHints();
   const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-  if (tab && isDocs(tab.url)) {
+  if (tab && isDocs(tab.url) && documentIdFromUrl(tab.url)) {
+    activeDocumentId = documentIdFromUrl(tab.url);
     activeTabId = tab.id;
     $("connected").textContent = "Connected";
     const key = draftKey();
@@ -479,7 +488,7 @@ for (const key of TOGGLES) {
 }
 for (const key of FEATURES) {
   $(key).addEventListener("click", async () => {
-    if (!configReady || configBusy) return;
+    if (!configReady || configBusy || key === "fixTypo") return;
     options[key] = !options[key];
     renderOptions();
     await persist();
@@ -504,7 +513,7 @@ $("reset").addEventListener("click", async () => {
 $("start").addEventListener("click", async () => {
   const text = $("text").value;
   if (!text.trim()) { setMessage("Paste some text first", "error"); return; }
-  if (text.length > 200000) { setMessage("Maximum 200,000 characters per session", "error"); return; }
+  if (Array.from(normalizedText(text)).length > 200000) { setMessage("Maximum 200,000 characters per session", "error"); return; }
   if (!currentReadyToStart || !configReady || !activeTabId || !draftLoaded ||
       clearingDraft || starting || controlPending || configBusy) return;
   starting = true;

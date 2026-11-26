@@ -10,7 +10,7 @@ const flush = async (n = 8) => {
   for (let i = 0; i < n; i++) await new Promise(resolve => setImmediate(resolve));
 };
 
-function typingHarness({pauseAtTypo = true} = {}) {
+function typingHarness({pauseAtTypo = true, verifiedCorrection = true} = {}) {
   const watchers = new Map();
   const buffer = {text: "HELLO", caret: 5};
   const inserted = [];
@@ -46,7 +46,7 @@ function typingHarness({pauseAtTypo = true} = {}) {
           }
         }
         queueMicrotask(() => document.dispatchEvent(new FakeEvent("__auto_type_main_response_v3__", {
-          detail: JSON.stringify({id: payload.id, ok: true})
+          detail: JSON.stringify({id: payload.id, ok: true, verifiedCorrection})
         })));
       }
       for (const fn of [...(watchers.get(event.type) || [])]) fn(event);
@@ -191,7 +191,7 @@ function popupHarness({failAlways = false} = {}) {
     return elements.get(key);
   };
   const storage = new Map([
-    ["autoTypeDraft:17", "Previous draft"],
+    ["autoTypeDraft:17:test", "Previous draft"],
     ["autoTypeDraft:99", "Orphaned draft"]
   ]);
   const calls = {set: 0, remove: [], start: 0, close: 0};
@@ -264,7 +264,7 @@ test("P2: quota failure prunes closed-tab drafts, retries, and then starts", asy
   await h.start("New important text");
   assert.equal(h.calls.set >= 2, true);
   assert.equal(h.storage.has("autoTypeDraft:99"), false);
-  assert.equal(h.storage.get("autoTypeDraft:17"), "New important text");
+  assert.equal(h.storage.get("autoTypeDraft:17:test"), "New important text");
   assert.equal(h.calls.start, 1);
   assert.equal(h.closed, true);
 });
@@ -301,12 +301,14 @@ test("P2: closing a tab removes its session draft in both editions", async () =>
       },
       commands:{onCommand:{addListener(){}}},
       debugger:{onDetach:{addListener(){}}},
-      storage:{session:{remove:async key=>removed.push(key)}}
+      storage:{session:{get:async()=>({"autoTypeDraft:47": "old", "autoTypeDraft:47:doc":"new","autoTypeDraft:48:doc":"keep"}),remove:async keys=>removed.push(...keys)}}
     };
     vm.runInNewContext(read(edition+"/background.js"), {chrome,console,setTimeout,clearTimeout});
     for (const handler of onRemoved) handler(47);
     await flush();
     assert.ok(removed.includes("autoTypeDraft:47"));
+    assert.ok(removed.includes("autoTypeDraft:47:doc"));
+    assert.ok(!removed.includes("autoTypeDraft:48:doc"));
   }
 });
 
@@ -319,4 +321,15 @@ test("v1.0.4 beta metadata and edition parity", () => {
     assert.equal(manifest.version,"1.0.4");
     assert.equal(manifest.version_name,"1.0.4-beta");
   }
+});
+
+// The old correction tests above use a hypothetical verified adapter. The real
+// bridge must never advertise that capability or perform destructive editing.
+test("unverified iframe never types a temporary typo or Backspace", async () => {
+  const h = typingHarness({pauseAtTypo:false, verifiedCorrection:false});
+  h.send("AT_PAGE_START", {text:"a", options:h.options});
+  await flush(30);
+  assert.equal(h.buffer.text,"HELLOa");
+  assert.deepEqual(h.backspaces,[]);
+  assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
 });

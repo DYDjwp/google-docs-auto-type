@@ -125,7 +125,7 @@
     // Probe before contacting the service worker so iframe typing works
     // even when Chrome cannot deliver a message to the background listener.
     let firstError;
-    try { await bridgeRequest("probe"); return; }
+    try { return await bridgeRequest("probe"); }
     catch (error) { firstError = error; }
 
     const message = firstError?.message || "";
@@ -138,7 +138,7 @@
     }
     // Retry a temporary Docs iframe replacement without relying on the worker.
     for (let attempt = 0; attempt < 6; attempt++) {
-      try { await bridgeRequest("probe"); return; }
+      try { return await bridgeRequest("probe"); }
       catch (error) {
         const transient = /Google Docs input (?:iframe|target) is unavailable/.test(error?.message || "");
         if (!transient || attempt === 5) throw error;
@@ -642,7 +642,7 @@
     const outgoing = cdpFallbackCharacter;
     task.cdpKeyInFlight = true;
     task.cdpKeyKind = outgoing === "\n" ? "Enter" : null;
-    try { await sendToBackground("AT_BG_INSERT", {char: outgoing}); }
+    try { await sendToBackground("AT_BG_INSERT", {char: outgoing, sessionId: task.sessionId}); }
     finally {
       task.cdpKeyKind = null;
       task.cdpKeyInFlight = false;
@@ -704,7 +704,11 @@
       task.phase = "preparing input iframe";
       task.mode = task.options.mode === "cdp" ? "CDP" : "iframe";
       if (task.options.mode !== "cdp") {
-        try { await prepareIframe(); }
+        try {
+          const probe = await prepareIframe();
+          // A legacy dispatch acknowledgement does not verify editor acceptance.
+          task.verifiedCorrection = probe?.verifiedCorrection === true;
+        }
         catch (error) {
           if (task.options.mode === "iframe") throw error;
           if (!HAS_CDP) throw error;
@@ -734,7 +738,7 @@
         const accidental = wrongLetter(character);
         // CDP key dispatch is tab-focused, not bound to the original
         // iframe document. Never create a typo that requires CDP Backspace.
-        const correction = task.mode !== "CDP" && accidental && task.options.fixTypo &&
+        const correction = task.verifiedCorrection && task.mode !== "CDP" && accidental && task.options.fixTypo &&
           Math.random() * 100 < task.options.fixChance;
         const leaveTypo = accidental && !correction && task.options.typo &&
           Math.random() * 100 < task.options.typoChance;
@@ -818,7 +822,7 @@
       if (task.state !== "stopped") task.state = "done";
     } catch (error) {
       task.error = error?.message || String(error);
-      task.state = "error";
+      if (!task.stopped) task.state = "error";
       // Diagnostic metadata only; never log source text or typed characters.
       let frame = {present: false};
       try {
@@ -837,7 +841,7 @@
         try { disableKeyboardLock(); }
         catch (error) { console.warn("[Auto Type] keyboard lock cleanup failed", error); }
         if (HAS_CDP && task.mode === "CDP") {
-          try { await sendToBackground("AT_BG_DETACH"); }
+          try { await sendToBackground("AT_BG_DETACH", {sessionId: task.sessionId}); }
           catch { /* debugger may already be detached */ }
         }
       } finally {
@@ -854,18 +858,22 @@
   }
 
   function start(message) {
+    const currentDoc = /^https:\/\/docs\.google\.com\/document\/(?:u\/\d+\/)?d\/([^/?#]+)/.exec(globalThis.location?.href || "")?.[1];
+    if (message.documentId && currentDoc !== undefined && currentDoc !== message.documentId)
+      return {ok:false,error:"Document changed; reopen Auto Type"};
     if (job && ["running", "paused"].includes(job.state))
       return {ok: false, error: "A typing session is already running. Stop it first."};
     if (job && !job.finalized)
       return {ok: false, error: "Previous typing session is still cleaning up. Try again shortly."};
     const text = String(message.text || "").replace(/\r\n?/g, "\n").replace(/\t/g, "    ");
     if (!text.trim()) return {ok: false, error: "Paste some text first."};
-    if (text.length > 200000) return {ok: false, error: "Maximum 200,000 characters per session."};
+    const chars = Array.from(text);
+    if (chars.length > 200000) return {ok: false, error: "Maximum 200,000 characters per session."};
     const options = normalize(message.options);
     localWaitFallback = false;
     nextBackgroundProbeAt = 0;
     job = {
-      chars: Array.from(text), index: 0, state: "running", stopped: false,
+      chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, verifiedCorrection: false, index: 0, state: "running", stopped: false,
       paused: false, options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
       correctionPending: false, correctionUnsafe: false,
@@ -882,6 +890,9 @@
     if (!message || !String(message.type || "").startsWith("AT_PAGE_")) return false;
     switch (message.type) {
       case "AT_PAGE_STATUS": respond({ok: true, status: getStatus()}); break;
+      case "AT_PAGE_CDP_VALIDATE":
+        respond({ok: Boolean(job && isActive(job) && job.mode === "CDP" && job.sessionId === message.sessionId)});
+        break;
       case "AT_PAGE_START": respond(start(message)); break;
       case "AT_PAGE_PAUSE": pause(); respond({ok: true, status: getStatus()}); break;
       case "AT_PAGE_RESUME": resume(); respond({ok: true, status: getStatus()}); break;
