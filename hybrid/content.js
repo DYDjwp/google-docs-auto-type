@@ -347,6 +347,8 @@
     let innerDoc = null, innerWindow = null, gesture = null;
     const editorSelector = ".kix-page, .kix-page-content-wrapper, .kix-canvas-tile-content, .kix-appview-editor, .kix-zoomdocumentplugin-outer, iframe.docs-texteventtarget-iframe";
     const chromeSelector = ".docs-toolbar, .docs-titlebar, .docs-menubar, .kix-ruler, .docs-sidebar, [role=menu], [role=dialog], [role=scrollbar]";
+    const isEditorChrome = event => Boolean(event.target?.closest?.(chromeSelector) ||
+      event.composedPath?.().some(node=>node?.matches?.(chromeSelector)));
     const inEditor = event => {
       if (event.currentTarget && (event.currentTarget === innerDoc || event.currentTarget === innerWindow)) return true;
       if (event.target?.ownerDocument && event.target.ownerDocument === innerDoc) return true;
@@ -363,6 +365,20 @@
           event.clientY >= r.top && event.clientY <= r.bottom;
       });
     };
+    // Probe anchor.js fallback: a single actual caret, not the mouse cursor.
+    // Missing/ambiguous rectangles do not establish a changed caret.
+    const visualCaret = () => {
+      const visible = [...(document.querySelectorAll?.(".kix-cursor-caret") || [])]
+        .map(node=>({node,rect:node.getBoundingClientRect()}))
+        .filter(({rect})=>rect.height > 0 && Number.isFinite(rect.left) && Number.isFinite(rect.top));
+      if (visible.length !== 1) return null;
+      const {node,rect} = visible[0];
+      const page = node.closest?.(".kix-page");
+      const editor = document.querySelector(".kix-appview-editor");
+      const origin = (page || editor)?.getBoundingClientRect?.();
+      return {x:rect.left-(origin?.left||0)+(page?0:editor?.scrollLeft||0),
+        y:rect.top-(origin?.top||0)+(page?0:editor?.scrollTop||0)};
+    };
     const clearGesture = g => {
       if (gesture !== g) return;
       gesture = null;
@@ -376,36 +392,51 @@
       // Docs may apply Selection after the click event, as in the Probe.
       await new Promise(resolve => setTimeout(resolve, 80));
       if (closed || gesture !== g) return;
-      const after = await readSelection();
-      if (closed || gesture !== g) return;
-      const before = g.before;
-      if (!g.reliable || !before || !after ||
-          before.start !== after.start || before.end !== after.end)
-        pause(before && after && g.reliable ? "Document caret moved" : "Document caret may have moved");
+      if (g.visualBefore) {
+        const after = visualCaret();
+        if (after && (Math.abs(after.x-g.visualBefore.x)>2 || Math.abs(after.y-g.visualBefore.y)>2))
+          pause("Document caret moved");
+      } else {
+        const after = await readSelection();
+        if (closed || gesture !== g) return;
+        const before = g.before;
+        if (g.uncertain) {
+          if (before && after && !sameSelection(before,after)) pause("Document caret moved");
+        } else if (!g.reliable || !sameSelection(before,after)) {
+          pause(before && after && g.reliable ? "Document caret moved" : "Document caret may have moved");
+        }
+      }
       clearGesture(g);
     };
-    const beginGesture = event => {
+    const beginGesture = (event,uncertain=false) => {
       if (gesture) {
-        // If the pre-click snapshot wasn't ready before the native mousedown,
-        // it may already contain the new caret. Treat it as uncertain.
         if (event.type === "mousedown" && !gesture.beforeReady) gesture.reliable = false;
+        if (!uncertain) gesture.uncertain = false;
         return;
       }
-      if (task.sending || task.correcting) { pause("Document caret may have moved"); return; }
+      if (task.sending || task.correcting) {
+        if (!uncertain) pause("Document caret may have moved");
+        return;
+      }
+      const visualBefore = uncertain && !task.bookmark && event.type !== "click" ? visualCaret() : null;
+      if (uncertain && !task.bookmark && !visualBefore) return;
       let resolve;
       const done = new Promise(r => {resolve = r;});
-      const g = gesture = {done, resolve, before:task.bookmark, beforeReady:!!task.bookmark,
-        reliable:!!task.bookmark || event.type === "pointerdown", finishing:false};
+      const g = gesture = {done,resolve,before:task.bookmark,beforeReady:!!task.bookmark,
+        reliable:!!task.bookmark || event.type === "pointerdown",finishing:false,uncertain,visualBefore};
       g.timeout = setTimeout(() => {
-        if (gesture === g && !closed) { pause("Document caret may have moved"); clearGesture(g); }
-      }, 1000);
-      if (g.beforeReady) return;
+        if (gesture === g && !closed) {
+          if (!g.uncertain) pause("Document caret may have moved");
+          clearGesture(g);
+        }
+      },1000);
+      if (g.beforeReady || g.visualBefore) return;
       void readSelection().then(before => {
         if (gesture !== g || closed) return;
         g.before = before;
         g.beforeReady = true;
-        if (before && g.reliable) {task.bookmark = before; task.selectionAvailable = true;}
-        if (!before) { pause("Document caret may have moved"); clearGesture(g); }
+        if (before && g.reliable) {task.bookmark = before;task.selectionAvailable = true;}
+        if (!before) {pause("Document caret may have moved");clearGesture(g);}
       });
     };
     const swallow = event => {
@@ -435,8 +466,9 @@
       if (task.options.mouseLock) { swallow(event); return; }
       if (gesture && ["pointerup","mouseup","click"].includes(type)) {
         void finishGesture(gesture);
-      } else if (inEditor(event) && ["pointerdown","mousedown","click"].includes(type)) {
-        beginGesture(event);
+      } else if (["pointerdown","mousedown","click"].includes(type) && !isEditorChrome(event)) {
+        const editor = inEditor(event);
+        if (editor || task.bookmark || type !== "click") beginGesture(event,!editor);
         if (type === "click" && gesture) void finishGesture(gesture);
       }
     };
@@ -514,16 +546,17 @@
     return at === "sentence" ? sentence : at === "word" ? word : sentence || word;
   }
 
-  async function sendCharacter(task, character) {
-    // Hold only during a real editor gesture; normal typing has no extra
-    // model reads. Recheck the task after the asynchronous hold.
-    for (;;) {
+  async function waitForTurn(task) {
+    while (isActive(task)) {
       const pending = task.guard?.pending();
-      if (pending) { await pending; continue; }
-      if (task.state === "paused") { await pauseAwareWait(task, 0); continue; }
-      break;
+      if (pending) {await pending;continue;}
+      if (task.state === "paused") {await pauseAwareWait(task,0);continue;}
+      return true;
     }
-    if (!isActive(task)) return false;
+    return false;
+  }
+  async function sendCharacter(task, character) {
+    if (!await waitForTurn(task)) return false;
     task.guard?.sync();
     task.sending = true;
     const previous = task.bookmark;
@@ -633,10 +666,13 @@
     notifyBadge(job, true);
   }
   async function fixCharacter(task, wrong, correct) {
+    if (!await waitForTurn(task)) return null;
+    if (!task.bookmark) return false;
+    task.guard?.sync();
     task.correcting = true;
     try {
       const result = await bridgeRequest("correct", {
-        sessionId:task.sessionId, wrong, correct, delay:task.options.fixPauseMs
+        sessionId:task.sessionId, selection:task.bookmark, wrong, correct, delay:task.options.fixPauseMs
       },7000);
       if (result.corrected && isActive(task)) {
         task.bookmark = validSelection(result.selection) ? result.selection : null;
@@ -691,16 +727,12 @@
         const accidental = wrongLetter(character);
         const wantsFix = task.options.fixTypo && task.selectionAvailable && task.mode === "iframe" &&
           accidental && Math.random() * 100 < task.options.fixChance;
-        const pending = task.guard?.pending();
-        if (pending) await pending;
-        if (task.state === "paused") await pauseAwareWait(task,0);
-        if (!isActive(task)) break;
+        if (!await waitForTurn(task)) break;
         if (task.selectionAvailable && !task.bookmark) {
           const current = await readSelection();
-          if (task.state === "running") task.bookmark = current;
+          if (task.state === "running" && !task.guard?.pending()) task.bookmark = current;
         }
-        if (task.state === "paused") await pauseAwareWait(task,0);
-        if (!isActive(task)) break;
+        if (!await waitForTurn(task)) break;
         let fixed = false;
         if (wantsFix && task.bookmark) {
           fixed = await fixCharacter(task,accidental,character);

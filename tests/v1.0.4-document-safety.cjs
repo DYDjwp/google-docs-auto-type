@@ -124,7 +124,7 @@ function modelBridge(edition,{ignoreTypo=false,ignoreRestore=false,available=tru
   vm.runInNewContext(read(edition+"/main-bridge.js"),{document,window,Event:E,CustomEvent:E,setTimeout,clearTimeout});
   let id=0;
   return {buffer,edits,send(action,extra={}){const n=++id;return new Promise(resolve=>{
-    requests.set(n,resolve);request({detail:JSON.stringify({id:n,action,sessionId:"task",...extra})});
+    requests.set(n,resolve);request({detail:JSON.stringify({id:n,action,sessionId:"task",...(action==="correct"?{selection:{start:5,end:5}}:{}),...extra})});
   });}};
 }
 for(const edition of ["iframe","hybrid"]){
@@ -169,6 +169,16 @@ for(const edition of ["iframe","hybrid"]){
   test(edition+" unavailable model skips correction before inserting typo",async()=>{
     const h=modelBridge(edition,{available:false});
     assert.equal((await h.send("correct",{wrong:"s",correct:"a",delay:0})).skipped,true);
+    assert.deepEqual(h.edits,[]);
+  });
+}
+
+for(const edition of ["iframe","hybrid"]){
+  test(edition+" correction refuses a different starting selection before inserting",async()=>{
+    const h=modelBridge(edition);
+    h.buffer.start=h.buffer.end=1;
+    assert.equal((await h.send("correct",{wrong:"s",correct:"a",delay:0})).corrected,false);
+    assert.equal(h.buffer.text,"HELLO WORLD");
     assert.deepEqual(h.edits,[]);
   });
 }

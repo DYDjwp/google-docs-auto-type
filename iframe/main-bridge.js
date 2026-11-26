@@ -116,6 +116,7 @@
     const before = api.getText(), point = selection(api);
     if (typeof before !== "string" || !point || point.start !== point.end || point.end > before.length)
       return {skipped:true};
+    if (!equal(point,request.selection)) return {corrected:false};
     const start=point.start,end=start+wrong.length;
     const temporary=before.slice(0,start)+wrong+before.slice(start);
     const expected=before.slice(0,start)+character+before.slice(start);
@@ -146,7 +147,7 @@
       request = JSON.parse(event.detail);
       if (!Number.isSafeInteger(request?.id)) throw new Error("Invalid request ID");
       if (request.action === "cancelOperation") {
-        if (operation?.sessionId === request.sessionId) operation.cancelled = true;
+        if (operation?.sessionId === request.sessionId) {operation.cancelled = true;operation = null;}
       } else if (["selection","restoreSelection","correct"].includes(request.action)) {
         const respond = value => document.dispatchEvent(new CustomEvent(RESPONSE,{
           detail:JSON.stringify({id:request.id,ok:true,...value})

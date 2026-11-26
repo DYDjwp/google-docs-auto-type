@@ -487,3 +487,32 @@ for(const edition of ["iframe","hybrid"]){
     assert.equal(h.edits.length,0);
   });
 }
+
+for(const edition of ["iframe","hybrid"]){
+  test(edition+" unknown click target uses actual caret rectangle as fallback",async()=>{
+    const h=makeHarness({edition,mouseLock:false,startDelay:0});
+    await h.start("ab");
+    let x=10;
+    h.document.querySelectorAll=selector=>selector===".kix-cursor-caret"?
+      [{getBoundingClientRect:()=>({left:x,top:40,height:16})}]:[];
+    h.document.dispatchEvent(event("pointerdown"));
+    x=200;
+    h.document.dispatchEvent(event("click"));
+    await new Promise(r=>setTimeout(r,120));await flush();
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+    assert.equal(h.edits.length,1);
+    h.send("AT_PAGE_STOP");await h.finish();
+  });
+  test(edition+" unknown click with bookmark detects changed insertion point",async()=>{
+    const h=makeHarness({edition,mouseLock:false,startDelay:0,selection:{start:5,end:5}});
+    await h.start("ab");
+    h.setSelection({start:2,end:2});
+    h.document.dispatchEvent(event("click"));
+    await new Promise(r=>setTimeout(r,120));await flush();
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+    h.send("AT_PAGE_RESUME");await flush();
+    assert.equal(h.currentSelection.start,6);
+    await h.finish();
+    assert.equal(h.currentSelection.start,7);
+  });
+}
