@@ -12,7 +12,7 @@ const flush = async () => {
 function harness(edition,{blockWait=false,blockDetach=false,failInsert=false}={}) {
   const handlers=new Map();
   let onMessage, releaseWait, releaseDetach, waitEntered=false, detachEntered=false;
-  let waitGated=false, detachGated=false, attachCount=0, stopCount=0;
+  let waitGated=false, detachGated=false, clock=0;
   const calls=[];
   class CustomEvent {
     constructor(type,options={}){this.type=type;this.detail=options.detail;}
@@ -41,18 +41,19 @@ function harness(edition,{blockWait=false,blockDetach=false,failInsert=false}={}
       calls.push(message.type);
       if(message.type==="AT_BG_WAIT" && blockWait && !waitGated) {
         waitGated=true;waitEntered=true;
-        return new Promise(resolve=>{releaseWait=()=>resolve({ok:true});});
+        return new Promise(resolve=>{releaseWait=()=>{clock+=message.ms;resolve({ok:true});};});
       }
       if(message.type==="AT_BG_DETACH" && blockDetach && !detachGated){
         detachGated=true;detachEntered=true;
         return new Promise(resolve=>{releaseDetach=()=>resolve({ok:true});});
       }
+      if(message.type==="AT_BG_WAIT") clock+=message.ms;
       if(message.type==="AT_BG_INSERT" && failInsert) throw Error("synthetic typing failure");
       return {ok:true};
     }
   }};
   vm.runInNewContext(read(edition+"/content.js"),{
-    document,chrome,window:{focus(){}},performance:{now:()=>1},
+    document,chrome,window:{focus(){}},performance:{now:()=>clock},
     console:{warn(){},info(){},error(){}},
     Math,setTimeout,clearTimeout,setInterval:()=>1,clearInterval(){},
     CustomEvent,Event:CustomEvent
