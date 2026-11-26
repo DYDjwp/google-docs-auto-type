@@ -116,7 +116,7 @@ test("AT1 round trips 250 deterministic mixed settings",()=>{
     assert.deepEqual(plain(c.decode(token)),v);
   }
 });
-function popupHarness(edition,{initial={},failWrite=false,failClipboard=false,holdFirstWrite=false}={}){
+function popupHarness(edition,{initial={},failWrite=false,failClipboard=false,holdFirstWrite=false,holdSettingsLoad=false}={}){
   class Element{
     constructor(){this.value="";this.textContent="";this.checked=false;this.disabled=false;this.hidden=false;
       this.style={};this.events=new Map();this.classList={toggle(){},add(){},remove(){}};}
@@ -129,7 +129,7 @@ function popupHarness(edition,{initial={},failWrite=false,failClipboard=false,ho
     async fire(type){return Promise.all((this.events.get(type)||[]).map(fn=>fn({type})));}
   }
   const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
-  let saved={...initial},writes=[],clip=[],writeCount=0,releaseFirst;
+  let saved={...initial},writes=[],clip=[],writeCount=0,releaseFirst,releaseSettingsLoad;
   const downloads=[], blobs=[], revoked=[];
   const document={getElementById:get,querySelectorAll:()=>[],
     createElement(tag){assert.equal(tag,"a");const a=new Element();
@@ -144,7 +144,10 @@ function popupHarness(edition,{initial={},failWrite=false,failClipboard=false,ho
     commands:{getAll:async()=>[]},
     storage:{
       local:{
-        get:async()=>({autoTypeSettings:saved}),
+        get:async()=>{
+          if(holdSettingsLoad)await new Promise(resolve=>{releaseSettingsLoad=resolve;});
+          return {autoTypeSettings:saved};
+        },
         set:async data=>{
           const n=++writeCount;
           if(n===1)await gate;
@@ -164,6 +167,7 @@ function popupHarness(edition,{initial={},failWrite=false,failClipboard=false,ho
     console,setTimeout,clearTimeout,setInterval:()=>1,clearInterval(){}
   });
   return {get,writes,clip,downloads,blobs,revoked,get saved(){return saved;},releaseFirst,
+    releaseSettingsLoad(){assert.ok(releaseSettingsLoad);releaseSettingsLoad();},
     async import(token){get("configToken").value=token;await get("importConfig").fire("click");await flush();},
     async export(){await get("exportConfig").fire("click");await flush();}};
 }
@@ -362,3 +366,49 @@ test("popup brand keeps the dot inside one centered logo element",()=>{
     assert.doesNotMatch(css, /\.mark span\{/);
   }
 });
+
+for (const edition of ["iframe","hybrid"]) {
+  test(edition+": P2 pending settings load disables every control and ignores early mutations",async()=>{
+    const h=popupHarness(edition,{
+      holdSettingsLoad:true,
+      initial:{cpm:900,mouseLock:true,advancedMode:true,jitter:25}
+    });
+    assert.equal(h.get("cpm").disabled,true);
+    assert.equal(h.get("advancedMode").disabled,true);
+    assert.equal(h.get("mouseLock").disabled,true);
+    assert.equal(h.get("mode").disabled,true);
+    assert.equal(h.get("reset").disabled,true);
+    assert.equal(h.get("exportConfig").disabled,true);
+    // Disabled DOM controls should not fire from real clicks; invoke their
+    // callbacks anyway to prove that all mutation paths have a second guard.
+    h.get("advancedMode").checked=false;
+    h.get("cpm").value="300";
+    h.get("mouseLock").checked=false;
+    h.get("mode").value="cdp";
+    await Promise.all([
+      h.get("advancedMode").fire("change"),
+      h.get("cpm").fire("change"),
+      h.get("mouseLock").fire("change"),
+      h.get("typo").fire("click"),
+      h.get("mode").fire("change"),
+      h.get("reset").fire("click")
+    ]);
+    await flush();
+    assert.equal(h.writes.length,0,"a pending storage read must never be overwritten");
+    assert.equal(h.saved.cpm,900);
+    assert.equal(h.saved.mouseLock,true);
+    h.releaseSettingsLoad();
+    await flush();
+    assert.equal(h.get("cpm").value,900);
+    assert.equal(h.get("mouseLock").checked,true);
+    assert.equal(h.get("advancedMode").checked,true);
+    assert.equal(h.get("cpm").disabled,false);
+    assert.equal(h.get("reset").disabled,false);
+    h.get("cpm").value="600";
+    await h.get("cpm").fire("change");
+    assert.equal(h.writes.length,1);
+    assert.equal(h.saved.cpm,600);
+    assert.equal(h.saved.mouseLock,true);
+    assert.equal(h.saved.jitter,25);
+  });
+}
