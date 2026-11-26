@@ -337,6 +337,13 @@ function renderStatus(status) {
     stopped: `Stopped at ${index}/${total}${error ? " · " + error : ""}`,
     error: `Error: ${error}`
   };
+  // Old content scripts can survive an unpacked-extension reload in an
+  // already open Docs tab. A missing readiness field is not proof of safety:
+  // require a document reload rather than silently leaving Start unusable.
+  if (typeof status.readyToStart !== "boolean") {
+    setMessage("Auto Type was updated. Reload the Google Docs tab to activate the new typing script.", "error");
+    return;
+  }
   const cleaning = !currentReadyToStart && ["stopped", "done", "error"].includes(state);
   setMessage((messages[state] || "Ready") + (cleaning ? " · Cleaning up…" : ""),
     state === "error" ? "error" : state === "done" && !cleaning ? "ok" : "idle");
