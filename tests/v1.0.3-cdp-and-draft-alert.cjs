@@ -10,12 +10,13 @@ const flush = async (steps = 24) => {
   for (let i = 0; i < steps; i++) await new Promise(resolve => setImmediate(resolve));
 };
 
-function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBackspace = false, secondTrustedBackspace = false, keyboardLock = false} = {}) {
+function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBackspace = false, secondTrustedBackspace = false, keyboardLock = false, deferBackspace = false} = {}) {
   const handlers = new Map();
   let onMessage;
   let clock = 0;
   let blockedWait = null;
   let blockNextWait = blockCorrection;
+  let queuedBackspace = null;
   const buffer = {text: "HELLO", caret: 5};
   const sent = [];
   const backspaces = [];
@@ -77,18 +78,27 @@ function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBac
       if (message.type === "AT_BG_INSERT") {
         insert(message.char);
       } else if (message.type === "AT_BG_BACKSPACE") {
-        // Chrome's CDP keyDown is trusted, unlike iframe-synthesized DOM Events.
-        trustedKeydowns++;
-        const own=trustedKey("Backspace");
-        if (secondTrustedBackspace) trustedKey("Backspace");
-        if(!own.defaultPrevented) {
-          backspaces.push(buffer.caret);
-          if (buffer.caret > 0) {
-            buffer.text = buffer.text.slice(0,buffer.caret-1) + buffer.text.slice(buffer.caret);
-            buffer.caret--;
+        const dispatch = () => {
+          // Model a trusted CDP keydown, delivered after an arbitrarily long
+          // background queue. A prevented keydown must not edit the document.
+          trustedKeydowns++;
+          const own=trustedKey("Backspace");
+          if (secondTrustedBackspace) trustedKey("Backspace");
+          if (!own.defaultPrevented) {
+            backspaces.push(buffer.caret);
+            if (buffer.caret > 0) {
+              buffer.text = buffer.text.slice(0,buffer.caret-1) + buffer.text.slice(buffer.caret);
+              buffer.caret--;
+            }
           }
+          trustedKey("Backspace","keyup");
+        };
+        if (deferBackspace) {
+          return new Promise(resolve => {
+            queuedBackspace = () => {dispatch();resolve({ok:true});};
+          });
         }
-        trustedKey("Backspace","keyup");
+        dispatch();
       } else if (message.type === "AT_BG_WAIT") {
         if (blockNextWait) {
           blockNextWait = false;
@@ -123,9 +133,20 @@ function makeCdpHarness({fallback = false, blockCorrection = false, uncertainBac
     send,options,buffer,sent,backspaces,observedKeys,
     get trustedKeydowns(){return trustedKeydowns;},
     get blocked(){return !!blockedWait;},
+    get backspaceQueued(){return !!queuedBackspace;},
+    get correctionGuardCount(){return (handlers.get("keydown") || []).length;},
+    releaseBackspace() {
+      assert.ok(queuedBackspace,"CDP Backspace was not queued");
+      const pending=queuedBackspace;queuedBackspace=null;pending();
+    },
     release(){assert.ok(blockedWait);const fn=blockedWait;blockedWait=null;fn();},
     fireTrustedKey(key){
       document.dispatchEvent({type:"keydown",key,isTrusted:true,preventDefault(){},stopImmediatePropagation(){}});
+    },
+    async waitForQueuedBackspace(){
+      for(let i=0;i<80&&!queuedBackspace;i++)await flush(1);
+      assert.ok(queuedBackspace,"CDP Backspace command should still be in-flight");
+      assert.equal(buffer.text,"HELLOs");
     },
     async waitForCorrection(){
       for(let i=0;i<50&&!blockedWait;i++) await flush(1);
@@ -435,3 +456,49 @@ for(const edition of ["iframe","hybrid"]){
     assert.equal(h.get("text").value,"");
   });
 }
+
+for(const keyboardLock of [false,true]){
+  test("P1 regression: delayed CDP Backspace after Stop cannot delete original text (keyboardLock="+keyboardLock+")",async()=>{
+    const h=makeCdpHarness({keyboardLock,deferBackspace:true});
+    h.send("AT_PAGE_START",{text:"a",options:h.options});
+    await h.waitForQueuedBackspace();
+    assert.ok(h.correctionGuardCount>0);
+    assert.equal(h.send("AT_PAGE_STOP").status.state,"stopped");
+    // Simulate user clicking in the middle of the original document after
+    // Stop releases keyboard/mouse locks, before CDP dispatches its keydown.
+    h.buffer.caret=3;
+    assert.ok(h.correctionGuardCount>0,"guard must survive Stop until background command resolves");
+    h.releaseBackspace();
+    await flush();
+    assert.equal(h.buffer.text,"HELLOs","late Backspace must not delete original 'L'");
+    assert.deepEqual(h.backspaces,[]);
+    assert.equal(h.send("AT_PAGE_STATUS").status.index,0);
+    assert.equal(h.observedKeys[0].defaultPrevented,true);
+    assert.equal(h.observedKeys[0].stopped,true);
+    assert.equal(h.correctionGuardCount,0,"guards must not leak after cleanup");
+  });
+  test("P1 regression: delayed CDP Backspace after Pause is blocked (keyboardLock="+keyboardLock+")",async()=>{
+    const h=makeCdpHarness({keyboardLock,deferBackspace:true});
+    h.send("AT_PAGE_START",{text:"a",options:h.options});
+    await h.waitForQueuedBackspace();
+    h.send("AT_PAGE_PAUSE");
+    h.buffer.caret=3;
+    h.releaseBackspace();
+    await flush();
+    assert.equal(h.buffer.text,"HELLOs");
+    assert.deepEqual(h.backspaces,[]);
+    assert.equal(h.observedKeys[0].defaultPrevented,true);
+    assert.equal(h.send("AT_PAGE_STATUS").status.index,0);
+  });
+}
+test("P1 regression: queued Backspace is still allowed for an active unchanged correction",async()=>{
+  const h=makeCdpHarness({deferBackspace:true});
+  h.send("AT_PAGE_START",{text:"a",options:h.options});
+  await h.waitForQueuedBackspace();
+  h.releaseBackspace();
+  await h.waitForFinish();
+  assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
+  assert.equal(h.buffer.text,"HELLOa");
+  assert.deepEqual(h.backspaces,[6]);
+  assert.equal(h.observedKeys[0].defaultPrevented,false);
+});
