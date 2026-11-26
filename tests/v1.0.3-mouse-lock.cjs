@@ -504,3 +504,58 @@ for(const edition of ["iframe","hybrid"]){
     });
   }
 }
+
+for (const edition of ["iframe","hybrid"]) {
+  test(edition+" visible widget handles caret pause without a duplicate alert",async()=>{
+    const h=makeHarness({edition,mouseLock:false,showOverlay:true,startDelay:0,notifications:true});
+    await h.start("ab");
+    h.setSelection({start:1,end:1});h.pollFrames();await flush();
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+    assert.equal(h.overlayButtons.get("#status").textContent,"Paused");
+    assert.match(h.overlayButtons.get("#detail").textContent,/Document caret moved/);
+    assert.equal(!!h.noticeHost?.isConnected,false);
+    h.overlayButtons.get("#close").dispatchEvent(event("click"));
+    assert.equal(h.overlayHost.isConnected,false);
+    assert.equal(h.noticeHost.isConnected,true);
+    h.noticeButtons.get("#noticeResume").dispatchEvent(event("click"));
+    await flush();
+    assert.equal(h.noticeHost.isConnected,false);
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
+    assert.equal(h.currentSelection.start,6);
+    await h.finish();
+  });
+  test(edition+" repeated caret pause alerts clear on resume and reappear",async()=>{
+    const h=makeHarness({edition,mouseLock:false,showOverlay:false,startDelay:0,notifications:true});
+    await h.start("ab");
+    for(let i=0;i<2;i++){
+      h.setSelection({start:1,end:1});h.pollFrames();await flush();
+      assert.equal(h.noticeHost.isConnected,true);
+      h.send("AT_PAGE_RESUME");await flush();
+      assert.equal(h.noticeHost.isConnected,false);
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
+    }
+    await h.finish();
+  });
+  test(edition+" routine legacy fallback does not open an alert",async()=>{
+    const h=makeHarness({edition,mouseLock:false,showOverlay:true,startDelay:0,selection:null,notifications:true});
+    await h.start("ab");
+    assert.equal(!!h.noticeHost?.isConnected,false);
+    assert.equal(h.overlayButtons.get("#detail").textContent,"Legacy mode");
+    await h.finish();
+  });
+  test(edition+" interrupted correction uses independent alert without duplicate detail",async()=>{
+    const h=makeHarness({edition,mouseLock:false,showOverlay:true,startDelay:0,notifications:true,fixTypo:true,holdCorrection:true});
+    assert.equal(h.send("AT_PAGE_START",{text:"ab",options:h.options}).ok,true);
+    for(let i=0;i<30&&!h.correcting;i++)await flush(1);
+    assert.ok(h.correcting);
+    h.send("AT_PAGE_PAUSE");
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"stopped");
+    assert.equal(h.noticeHost.isConnected,true);
+    assert.match(h.noticeButtons.get("#message").textContent,/Correction interrupted/);
+    assert.equal(h.overlayButtons.get("#detail").textContent,"");
+    h.noticeButtons.get("#dismiss").dispatchEvent(event("click"));
+    assert.equal(h.noticeHost.isConnected,false);
+    assert.match(h.overlayButtons.get("#detail").textContent,/Correction interrupted/);
+    await h.finish();
+  });
+}

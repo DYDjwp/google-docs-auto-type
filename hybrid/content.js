@@ -245,94 +245,144 @@
     void chrome.runtime.sendMessage({type: "AT_BG_BADGE", badge}).catch(() => {});
   }
 
+  // The progress widget and independent alerts use the same compact visual
+  // language. Progress remains in the widget; a separate alert carries
+  // actionable details only when the widget is hidden or a task fails.
+  const UI_STYLE = `
+    :host{all:initial;color-scheme:light}
+    *{box-sizing:border-box}
+    .surface{background:#fff;color:#222b25;border:1px solid #dce5de;
+      border-radius:12px;box-shadow:0 5px 22px #152c1b1c;
+      font:13px/1.45 system-ui,-apple-system,BlinkMacSystemFont,sans-serif}
+    .top{display:flex;align-items:center;gap:8px;justify-content:space-between}
+    .brand{font-size:12px;font-weight:650;color:#31684d;white-space:nowrap}
+    .close{border:0;background:none;color:#66736a;font-size:20px;line-height:1;
+      width:26px;height:26px;flex:none;padding:0;border-radius:6px}
+    .close:hover{background:#eef3ef}
+    button{font:600 12px system-ui,sans-serif;cursor:pointer;border:1px solid #dce5de;
+      border-radius:7px;padding:7px 12px;color:#34463a;background:#fff}
+    button:focus-visible{outline:2px solid #327455;outline-offset:2px}
+    button:disabled{opacity:.45;cursor:default}
+    .primary{color:white;background:#31684d;border-color:#31684d}
+    .primary:not(:disabled):hover{background:#28583f}
+    .secondary:not(:disabled):hover{background:#f2f5f2}
+    [hidden]{display:none!important}
+  `;
+  function clearNotice() {
+    noticeHost?.remove();
+    noticeHost=null;
+    if (job) job.lastNotice="";
+  }
+  function positionNotice() {
+    if (!noticeHost?.isConnected) return;
+    const height=overlay?.host?.isConnected ? (overlay.host.getBoundingClientRect?.().height || 136)+10 : 0;
+    noticeHost.style.bottom=`calc(16px + ${height}px)`;
+  }
   function ensureOverlay() {
     if (overlay?.host?.isConnected) return overlay;
-    const host = document.createElement("div");
-    host.id = "auto-type-widget-root";
-    host.style.cssText = "all:initial;position:fixed;bottom:24px;right:24px;z-index:2147483646";
-    const root = host.attachShadow({mode: "closed"});
-    root.innerHTML = `
-      <style>
-        *{box-sizing:border-box} .panel{width:270px;padding:14px;border-radius:16px;
-        border:1px solid #dfe5ef;background:#fff;color:#1e2636;
-        box-shadow:0 14px 42px rgba(21,37,70,.24);font:13px/1.5 system-ui,-apple-system,sans-serif}
-        .top{display:flex;align-items:center;justify-content:space-between}
-        .brand{font-size:12px;font-weight:700;letter-spacing:0}
-        .label{font-size:11px;color:#68776c;margin-top:8px}
-        .bar{height:3px;border-radius:3px;background:#dce7df;overflow:hidden;margin-top:9px}
-        .fill{height:100%;width:0;background:#327455;transition:width .18s;border-radius:2px}
-        .buttons{display:flex;gap:7px;margin-top:11px}
-        button{cursor:pointer;border:1px solid #dce3dc;border-radius:6px;font:600 11px system-ui;padding:8px 11px}
-        #toggle{color:white;background:#31684d;border-color:#31684d;flex:1}
-        #stop{color:#56695d;background:#fff;flex:1}
-        #close{background:transparent;border:0;color:#8b978b;padding:0 5px;font-size:17px}
+    const host=document.createElement("div");
+    host.id="auto-type-widget-root";
+    host.style.cssText="all:initial;position:fixed;bottom:16px;right:16px;z-index:2147483646";
+    const root=host.attachShadow({mode:"closed"});
+    root.innerHTML=`
+      <style>${UI_STYLE}
+        .panel{width:min(280px,calc(100vw - 32px));padding:12px}
+        .status-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:3px}
+        .state{font-size:13px;font-weight:650}
+        .count{color:#6b756e;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+        .detail{margin:5px 0 0;color:#637067;font-size:12px;overflow-wrap:anywhere}
+        .bar{height:4px;border-radius:4px;background:#e7ede8;overflow:hidden;margin-top:9px}
+        .fill{height:100%;width:0;background:#327455;transition:width .18s;border-radius:4px}
+        .buttons{display:flex;gap:7px;margin-top:10px}
+        .buttons button{flex:1}
       </style>
-      <div class="panel">
-        <div class="top"><span class="brand">Auto Type</span><button id="close" title="Hide panel">×</button></div>
-        <div class="label" id="status">Ready to type</div>
-        <div class="bar"><div class="fill" id="fill"></div></div>
-        <div class="buttons"><button id="toggle">Pause</button><button id="stop">Stop</button></div>
+      <div class="surface panel" role="region" aria-label="Auto Type controls">
+        <div class="top"><span class="brand">Auto Type</span><button class="close" id="close" title="Hide controls" aria-label="Hide controls">×</button></div>
+        <div class="status-row"><span class="state" id="status">Ready</span><span class="count" id="count"></span></div>
+        <div class="detail" id="detail" hidden></div>
+        <div class="bar" aria-hidden="true"><div class="fill" id="fill"></div></div>
+        <div class="buttons"><button class="primary" id="toggle">Pause</button><button class="secondary" id="stop">Stop</button></div>
       </div>`;
     (document.body || document.documentElement).append(host);
-    overlay = {
-      host,
-      status: root.querySelector("#status"),
-      fill: root.querySelector("#fill"),
-      toggle: root.querySelector("#toggle"),
-      stop: root.querySelector("#stop")
-    };
-    // Mouse-operated controls must not steal the document's text focus.
-    for (const button of [overlay.toggle, overlay.stop, root.querySelector("#close")]) {
-      button.addEventListener("mousedown", event => event.preventDefault());
-    }
-    overlay.toggle.addEventListener("click", () => {
-      if (!job) return;
-      if (job.state === "paused") resume();
-      else if (job.state === "running") pause();
+    overlay={host,status:root.querySelector("#status"),count:root.querySelector("#count"),
+      detail:root.querySelector("#detail"),fill:root.querySelector("#fill"),
+      toggle:root.querySelector("#toggle"),stop:root.querySelector("#stop")};
+    const close=root.querySelector("#close");
+    for(const button of [overlay.toggle,overlay.stop,close])
+      button.addEventListener("mousedown",event=>event.preventDefault());
+    overlay.toggle.addEventListener("click",()=>{
+      if(job?.state==="paused")resume();
+      else if(job?.state==="running")pause();
     });
-    overlay.stop.addEventListener("click", stop);
-    root.querySelector("#close").addEventListener("click", () => host.remove());
+    overlay.stop.addEventListener("click",()=>stop());
+    close.addEventListener("click",()=>{
+      host.remove();
+      if(job?.state==="paused" && job.pauseReason)showNotice(job,job.pauseReason,"pause");
+      positionNotice();
+    });
     updateOverlay();
     return overlay;
   }
 
   function updateOverlay() {
-    if (!overlay?.host?.isConnected) return;
-    const status = getStatus();
-    const progress = status.total ? Math.round(status.index * 100 / status.total) : 0;
-    const labels = {
-      running: `Typing · ${status.index} / ${status.total} · ${status.mode || "preparing"}`,
-      paused: `Paused · ${status.index} / ${status.total}${status.pauseReason ? " · " + status.pauseReason : ""}`,
-      done: `Sent ${status.total} characters · verify your doc`,
-      stopped: `Stopped · ${status.index} / ${status.total}${status.error ? " · " + status.error : ""}`,
-      error: `Error: ${status.error || "typing failed"}`,
-      idle: "Ready"
-    };
-    overlay.status.textContent = (labels[status.state] || "preparing") + (status.notice && ["running","done"].includes(status.state) ? " · " + status.notice : "");
-    overlay.fill.style.width = `${progress}%`;
-    overlay.toggle.textContent = status.restoring ? "Restoring…" : status.state === "paused" ? "Resume" : "Pause";
-    overlay.toggle.disabled = status.restoring || !["paused", "running"].includes(status.state);
-    overlay.stop.disabled = !["paused", "running"].includes(status.state);
-    overlay.toggle.style.opacity = overlay.toggle.disabled ? ".45" : "1";
-    overlay.stop.style.opacity = overlay.stop.disabled ? ".45" : "1";
+    if(!overlay?.host?.isConnected)return;
+    const s=getStatus(),progress=s.total?Math.round(s.index*100/s.total):0;
+    const active=["running","paused"].includes(s.state);
+    const labels={running:"Typing",paused:s.restoring?"Restoring caret…":"Paused",done:"Completed",stopped:"Stopped",error:"Typing failed",idle:"Ready"};
+    overlay.status.textContent=labels[s.state]||"Preparing";
+    overlay.count.textContent=s.total?`${s.index}/${s.total} · ${progress}%`:"";
+    // Details are not duplicated if a separate error alert is on screen.
+    const detail=s.state==="paused" ? (s.pauseReason||"Ready to resume") :
+      s.state==="running" ? (s.caretMode==="model"?"Caret tracking":s.mode?"Legacy mode":"Preparing input") :
+      s.state==="done" ? "Review the document." :
+      (!noticeHost?.isConnected && (s.error||"")) || "";
+    overlay.detail.textContent=detail;
+    overlay.detail.hidden=!detail;
+    overlay.fill.style.width=`${progress}%`;
+    overlay.toggle.textContent=s.restoring?"Restoring…":s.state==="paused"?"Resume":"Pause";
+    overlay.toggle.disabled=s.restoring||!active;
+    overlay.stop.disabled=!active;
+    overlay.toggle.hidden=!active;
+    overlay.stop.hidden=!active;
+    positionNotice();
   }
 
-  function showNotice(task, message) {
-    if (!task.options.notifications || !message || task.lastNotice === message || !document.createElement) return;
-    task.lastNotice = message;
+  function showNotice(task,message,kind="error") {
+    if(!task.options.notifications||!message||!document.createElement)return;
+    // Legacy mode and other routine information belong to status, not alerts.
+    if(kind==="info" || (kind==="pause" && overlay?.host?.isConnected))return;
+    if(noticeHost?.isConnected && task.lastNotice===message)return;
+    clearNotice();
     try {
-      noticeHost?.remove();
-      const host = document.createElement("div");
-      host.id = "auto-type-notice-root";
-      host.style.cssText = "all:initial;position:fixed;top:24px;right:24px;z-index:2147483647";
-      const root = host.attachShadow({mode:"closed"});
-      root.innerHTML = `<style>:host{all:initial}.notice{box-sizing:border-box;width:320px;max-width:90vw;background:white;color:#202124;padding:16px;border:1px solid #dadce0;border-radius:12px;box-shadow:0 8px 32px #0003;font:14px/1.5 system-ui}.title{font-weight:650}.message{margin:8px 0 12px;overflow-wrap:anywhere}button{font:inherit;border:1px solid #dadce0;border-radius:6px;background:#fff;padding:5px 12px;cursor:pointer}</style><div class="notice" role="alert"><div class="title">Auto Type</div><div class="message" id="message"></div><button id="dismiss">Dismiss</button></div>`;
-      root.querySelector("#message").textContent = message;
-      root.querySelector("#dismiss").addEventListener("mousedown", e=>e.preventDefault());
-      root.querySelector("#dismiss").addEventListener("click",()=>{host.remove();if(noticeHost===host)noticeHost=null;});
+      const host=document.createElement("div");
+      host.id="auto-type-notice-root";
+      host.style.cssText="all:initial;position:fixed;bottom:16px;right:16px;z-index:2147483647";
+      const root=host.attachShadow({mode:"closed"});
+      root.innerHTML=`
+        <style>${UI_STYLE}
+          .notice{width:min(280px,calc(100vw - 32px));padding:12px;border-left:3px solid #b47c32}
+          .title{font-weight:650;font-size:13px}
+          .message{color:#4c5950;margin:7px 0 10px;overflow-wrap:anywhere;font-size:12px}
+          .actions{display:flex;justify-content:flex-end;gap:7px}
+        </style>
+        <div class="surface notice" role="alert">
+          <div class="top"><span class="title" id="title"></span><button class="close" id="dismiss" aria-label="Dismiss notification" title="Dismiss notification">×</button></div>
+          <div class="message" id="message"></div>
+          <div class="actions" id="actions"><button class="secondary" id="noticeStop">Stop</button><button class="primary" id="noticeResume">Resume</button></div>
+        </div>`;
+      root.querySelector("#title").textContent=kind==="pause"?"Auto Type paused":"Auto Type stopped";
+      root.querySelector("#message").textContent=message;
+      root.querySelector("#actions").hidden=kind!=="pause";
+      const dismiss=root.querySelector("#dismiss");
+      const resumeButton=root.querySelector("#noticeResume"),stopButton=root.querySelector("#noticeStop");
+      for(const button of [dismiss,resumeButton,stopButton])button.addEventListener("mousedown",e=>e.preventDefault());
+      dismiss.addEventListener("click",()=>{if(noticeHost===host){clearNotice();updateOverlay();}});
+      resumeButton.addEventListener("click",()=>{if(job===task&&noticeHost===host&&task.state==="paused"){clearNotice();resume();}});
+      stopButton.addEventListener("click",()=>{if(job===task&&noticeHost===host&&task.state==="paused"){clearNotice();stop();}});
       (document.body || document.documentElement).append(host);
-      noticeHost = host;
-    } catch (error) {console.warn("[Auto Type] Notice could not be displayed",error);}
+      noticeHost=host;task.lastNotice=message;
+      positionNotice();
+    }catch(error){console.warn("[Auto Type] Notice could not be displayed",error);}
   }
   function isOverlayEvent(event) {
     return [overlay?.host,noticeHost].some(host=>Boolean(host?.isConnected && (
@@ -481,7 +531,7 @@
           task.selectionAvailable = false;
           task.bookmark = null;
           task.notice = "Selection API unavailable; using legacy typing behavior";
-          showNotice(task,task.notice);
+          showNotice(task,task.notice,"info");
         }
         return true;
       }
@@ -550,7 +600,7 @@
             task.selectionAvailable = false;
             task.bookmark = null;
             task.notice = "Selection API unavailable; using legacy typing behavior";
-            showNotice(task,task.notice);
+            showNotice(task,task.notice,"info");
           } else {
             task.bookmark = null;
             if (task.state === "running") pause("Input position could not be confirmed");
@@ -571,7 +621,7 @@
     job.pauseReason = typeof reason === "string" ? reason : "";
     if (job.selectionAvailable && !job.bookmark && !job.sending) job.pauseReason += (job.pauseReason ? " · " : "") +
       "Automatic caret restoration unavailable";
-    if (job.pauseReason) showNotice(job,job.pauseReason);
+    if (job.pauseReason) showNotice(job,job.pauseReason,"pause");
     job.guard?.close();
     updateOverlay();
     notifyBadge(job, true);
@@ -581,6 +631,7 @@
     if (!task || task.state !== "paused" || task.restoring) return;
     const activate = () => {
       if (job !== task || task.state !== "paused") return;
+      clearNotice();
       task.state = "running";
       task.pauseReason = "";
       try { installInputGuard(task); }
@@ -624,6 +675,7 @@
     job.error = typeof reason === "string" && reason ? reason :
       (job.correcting ? "Correction interrupted. A temporary typo may remain; review the document." : job.error);
     job.state = "stopped";
+    clearNotice();
     if (job.error) showNotice(job,job.error);
     job.guard?.close();
     updateOverlay();
@@ -694,7 +746,7 @@
         // A selected range may be unsupported by the experimental correction
         // even when Selection is readable. Do not issue a blind deletion.
         task.notice = "Model correction skipped for the current selection";
-        showNotice(task,task.notice);
+        showNotice(task,task.notice,"info");
         return false;
       }
       if (isActive(task)) stop("Correction not confirmed. Check the document before restarting.");
@@ -726,7 +778,7 @@
       }
       if (!task.selectionAvailable) {
         task.notice = "Selection API unavailable; using legacy typing behavior";
-        showNotice(task,task.notice);
+        showNotice(task,task.notice,"info");
       }
       if (task.options.showOverlay) ensureOverlay();
       else if (overlay?.host?.isConnected) overlay.host.remove();
@@ -836,7 +888,7 @@
     const chars = Array.from(text);
     if (chars.length > 200000) return {ok: false, error: "Maximum 200,000 characters per session."};
     const options = normalize(message.options);
-    noticeHost?.remove();noticeHost=null;
+    clearNotice();
     localWaitFallback = false;
     nextBackgroundProbeAt = 0;
     job = {
