@@ -206,7 +206,8 @@ function popupHarness({failAlways = false} = {}) {
         : [{id:17},{id:18}],
       sendMessage: async (id, payload) => {
         if (payload.type === "AT_PAGE_START") calls.start++;
-        return {ok:true,status:{state:payload.type==="AT_PAGE_START"?"running":"idle",index:0,total:0}};
+        return {ok:true,status:{state:payload.type==="AT_PAGE_START"?"running":"idle",
+          readyToStart:payload.type!=="AT_PAGE_START",index:0,total:0}};
       }
     },
     scripting: {executeScript: async () => {}},
