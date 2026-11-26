@@ -92,8 +92,8 @@ function typingHarness({pauseAtTypo = true, verifiedCorrection = false} = {}) {
     release() {assert.ok(blockedWait); const resolve = blockedWait; blockedWait = null; resolve();},
     async waitForTemp() {
       for (let i = 0; i < 25 && !blockedWait; i++) await flush(1);
-      assert.equal(buffer.text, "HELLOa");
-      assert.ok(blockedWait, "must be waiting between characters");
+      assert.equal(buffer.text, "HELLOs");
+      assert.ok(blockedWait, "must be waiting during correction");
     },
     fireTrusted(type) {
       document.dispatchEvent({type, isTrusted: true, target:{closest:selector=>selector.includes(".kix-page")?{}:null}});
@@ -101,7 +101,7 @@ function typingHarness({pauseAtTypo = true, verifiedCorrection = false} = {}) {
   };
 }
 
-test("stop after first character never deletes original text or advances unsent progress",async()=>{
+test("stop during legacy temporary typo never deletes original text or advances progress",async()=>{
   const h=typingHarness();
   h.send("AT_PAGE_START",{text:"ab",options:h.options});
   await h.waitForTemp();
@@ -109,21 +109,21 @@ test("stop after first character never deletes original text or advances unsent 
   h.send("AT_PAGE_STOP");
   h.release();
   await flush();
-  assert.equal(h.buffer.text,"HELLOa");
-  assert.deepEqual(h.backspaces,[6]);
-  assert.equal(h.send("AT_PAGE_STATUS").status.index,1);
+  assert.equal(h.buffer.text,"HELLOs");
+  assert.deepEqual(h.backspaces,[]);
+  assert.equal(h.send("AT_PAGE_STATUS").status.index,0);
 });
 
-test("mouse interaction alone does not pause without a model",async()=>{
+test("legacy mouse interaction cancels only an active correction",async()=>{
   const h=typingHarness();
   h.send("AT_PAGE_START",{text:"ab",options:h.options});
   await h.waitForTemp();
   h.fireTrusted("pointerdown");
   await flush();
-  assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
-  h.send("AT_PAGE_STOP");h.release();await flush();
-  assert.equal(h.buffer.text,"HELLOa");
-  assert.deepEqual(h.backspaces,[6]);
+  assert.equal(h.send("AT_PAGE_STATUS").status.state,"stopped");
+  h.release();await flush();
+  assert.equal(h.buffer.text,"HELLOs");
+  assert.deepEqual(h.backspaces,[]);
 });
 
 test("legacy correction remains available without annotated model",async()=>{

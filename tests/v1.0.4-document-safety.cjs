@@ -182,3 +182,17 @@ for(const edition of ["iframe","hybrid"]){
     assert.deepEqual(h.edits,[]);
   });
 }
+
+test("dev annotation hook runs in MAIN at document_start without replacing an existing flag",()=>{
+  for(const edition of ["iframe","hybrid"]){
+    const manifest=JSON.parse(read(edition+"/manifest.json"));
+    const early=manifest.content_scripts[0];
+    assert.equal(early.run_at,"document_start");
+    assert.equal(early.world,"MAIN");
+    assert.equal(early.all_frames,false);
+    assert.deepEqual(early.js,["annotated-early.js"]);
+    const window={_docs_annotate_canvas_by_ext:"existing-authorization"};
+    vm.runInNewContext(read(edition+"/annotated-early.js"),{window});
+    assert.equal(window._docs_annotate_canvas_by_ext,"existing-authorization");
+  }
+});

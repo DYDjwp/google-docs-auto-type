@@ -58,7 +58,7 @@
     if (!job) return {state: "idle", index: 0, total: 0, mode: "", error: "", readyToStart: true};
     return {
       state: job.state, index: job.index, total: job.chars.length,
-      mode: job.mode, error: job.error || "", pauseReason: job.pauseReason || "", notice: job.notice || "", restoring: !!job.restoring,
+      mode: job.mode, caretMode: job.selectionAvailable ? "model" : "legacy", error: job.error || "", pauseReason: job.pauseReason || "", notice: job.notice || "", restoring: !!job.restoring,
       // "stopped", "done" and "error" may be reported while asynchronous
       // waits, debugger detach, and event-listener cleanup remain in flight.
       // Only a finalized task can safely be replaced with a new task.
@@ -473,8 +473,7 @@
       if (job !== task || task.state !== "running" || task.sending || task.correcting ||
           task.restoring || task.bookmark !== expected) return true;
       if (!actual) {
-        // A transient unavailable model is not evidence of movement. Stop only
-        // after repeated failures, rather than firing a false movement alert.
+        // A transient unavailable model is not evidence of movement.
         if (++task.caretFailures >= 3) {
           // No change was observed, only loss of the experimental interface.
           // Fall back to the stable typing lifecycle, without pretending to
@@ -547,7 +546,12 @@
         }
         if (isActive(task)) {
           if (sameSelection(actual,expected)) task.bookmark = expected;
-          else {
+          else if (!actual && task.state === "running") {
+            task.selectionAvailable = false;
+            task.bookmark = null;
+            task.notice = "Selection API unavailable; using legacy typing behavior";
+            showNotice(task,task.notice);
+          } else {
             task.bookmark = null;
             if (task.state === "running") pause("Input position could not be confirmed");
           }
