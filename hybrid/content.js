@@ -55,10 +55,14 @@
   }
 
   function getStatus() {
-    if (!job) return {state: "idle", index: 0, total: 0, mode: "", error: ""};
+    if (!job) return {state: "idle", index: 0, total: 0, mode: "", error: "", readyToStart: true};
     return {
       state: job.state, index: job.index, total: job.chars.length,
-      mode: job.mode, error: job.error || ""
+      mode: job.mode, error: job.error || "",
+      // "stopped", "done" and "error" may be reported while asynchronous
+      // waits, debugger detach, and event-listener cleanup remain in flight.
+      // Only a finalized task can safely be replaced with a new task.
+      readyToStart: job.finalized && !["running", "paused"].includes(job.state)
     };
   }
 
