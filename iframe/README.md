@@ -1,6 +1,6 @@
 # Auto Type — iframe edition
 
-**Safety:** Automatic typo correction is temporarily disabled because the Google Docs iframe cannot verify character acceptance. Configuration fields remain compatible.
+**Safety:** Legacy opt-in iframe correction is available. It cannot prove acceptance of the temporary typo; review the document. CDP does not issue automatic Backspace.
 
 This is the iframe-only build of Auto Type. It enters text through Google Docs' internal input iframe and does not request Chrome's `debugger` permission.
 

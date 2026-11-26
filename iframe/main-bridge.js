@@ -79,8 +79,15 @@
             throw new Error("Invalid Enter strategy");
           enter(request.strategy);
           break;
-        case "backspace":
-          throw new Error("Automatic Backspace is disabled: editor acceptance cannot be verified");
+        case "backspace": {
+          // Legacy opt-in behavior. The content script guards the active
+          // session, iframe identity and trusted input before requesting it.
+          // This is dispatch confirmation, not proof of document acceptance.
+          const target = getTarget();
+          legacyKey(target, "keydown", "Backspace", 8);
+          legacyKey(target, "keyup", "Backspace", 8);
+          break;
+        }
         default:
           throw new Error("Unknown bridge action");
       }

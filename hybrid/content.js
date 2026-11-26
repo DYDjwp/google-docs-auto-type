@@ -512,7 +512,7 @@
   function syncInputProtection(task) {
     const snapshot = correctionFrameSnapshot();
     if (!snapshot.accessible && (task.options.keyboardLock ||
-        task.options.mouseLock || task.verifiedCorrection))
+        task.options.mouseLock || task.options.fixTypo))
       throw new Error("Editor input iframe is inaccessible; input protection cannot be verified");
     task.syncMouseFrame?.(snapshot);
     task.syncKeyboardFrame?.(snapshot);
@@ -705,9 +705,7 @@
       task.mode = task.options.mode === "cdp" ? "CDP" : "iframe";
       if (task.options.mode !== "cdp") {
         try {
-          const probe = await prepareIframe();
-          // A legacy dispatch acknowledgement does not verify editor acceptance.
-          task.verifiedCorrection = probe?.verifiedCorrection === true;
+          await prepareIframe();
         }
         catch (error) {
           if (task.options.mode === "iframe") throw error;
@@ -738,7 +736,7 @@
         const accidental = wrongLetter(character);
         // CDP key dispatch is tab-focused, not bound to the original
         // iframe document. Never create a typo that requires CDP Backspace.
-        const correction = task.verifiedCorrection && task.mode !== "CDP" && accidental && task.options.fixTypo &&
+        const correction = task.mode !== "CDP" && accidental && task.options.fixTypo &&
           Math.random() * 100 < task.options.fixChance;
         const leaveTypo = accidental && !correction && task.options.typo &&
           Math.random() * 100 < task.options.typoChance;
@@ -870,7 +868,7 @@
     localWaitFallback = false;
     nextBackgroundProbeAt = 0;
     job = {
-      chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, verifiedCorrection: false, index: 0, state: "running", stopped: false,
+      chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, index: 0, state: "running", stopped: false,
       paused: false, options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
       correctionPending: false, correctionUnsafe: false,

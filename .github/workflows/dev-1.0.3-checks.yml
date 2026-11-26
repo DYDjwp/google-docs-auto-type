@@ -21,7 +21,7 @@ jobs:
       - name: Check both Chrome extension editions
         run: |
           set -euo pipefail
-          node -e "const a=require('./iframe/manifest.json'),b=require('./hybrid/manifest.json');if(a.version!==b.version||a.version_name!==b.version_name||!/^\\d+\\.\\d+\\.\\d+$/.test(a.version))process.exit(1)"
+          node -e "const a=require('./iframe/manifest.json'),b=require('./hybrid/manifest.json');if(a.version!==b.version||a.version_name!==b.version_name||!/^\\d+\\.\\d+\\.\\d+(?:\\.\\d+)?$/.test(a.version))process.exit(1)"
           for edition in iframe hybrid; do
             for script in "$edition"/*.js; do node --check "$script"; done
           done
@@ -43,8 +43,8 @@ jobs:
           set -euo pipefail
           version="$(node -p "require('./iframe/manifest.json').version")"
           label="$(node -p "require('./iframe/manifest.json').version_name")"
-          if [[ "$version" != "1.0.4" || "$label" != "$version" ]]; then
-            echo "Not the approved stable 1.0.4 release"; exit 0
+          if [[ "$version" != "1.0.4.1" || "$label" != "$version" ]]; then
+            echo "Not the approved stable 1.0.4.1 release"; exit 0
           fi
           tag="v$version"
           if gh release view "$tag" >/dev/null 2>&1; then
@@ -55,4 +55,4 @@ jobs:
             (cd "$edition" && zip -q -r "$RUNNER_TEMP/auto-type-release/auto-type-$version-$edition.zip" .)
             unzip -t "$RUNNER_TEMP/auto-type-release/auto-type-$version-$edition.zip"
           done
-          gh release create "$tag" "$RUNNER_TEMP"/auto-type-release/*.zip --target "$GITHUB_SHA" --title "Auto Type v$version" --latest --notes "Stable 1.0.4: configuration Token/JSON export and import, optional uninstall feedback, document-scoped drafts, safe Stop/Start cleanup, CDP document/session validation, and safer status handling. Automatic Fix typo is temporarily disabled because synthetic dispatch cannot establish editor acceptance. Intentional Typo remains available. Review the resulting document and reload Docs after upgrading."
+          gh release create "$tag" "$RUNNER_TEMP"/auto-type-release/*.zip --target "$GITHUB_SHA" --title "Auto Type v$version" --latest --notes "Stable 1.0.4.1 restores the original optional iframe Fix typo behavior without changing the 1.0.4 audited draft, status, and CDP session protections. Synthetic iframe dispatch cannot confirm editor acceptance; review the document or leave Fix typo off for important documents. CDP does not perform automatic Backspace. The experimental model-aware caret features remain on dev/1.0.5."

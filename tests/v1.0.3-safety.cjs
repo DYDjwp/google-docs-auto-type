@@ -318,18 +318,17 @@ test("v1.0.4 beta metadata and edition parity", () => {
   }
   for (const edition of ["iframe","hybrid"]) {
     const manifest = JSON.parse(read(edition+"/manifest.json"));
-    assert.equal(manifest.version,"1.0.4");
-    assert.equal(manifest.version_name,"1.0.4");
+    assert.equal(manifest.version,"1.0.4.1");
+    assert.equal(manifest.version_name,"1.0.4.1");
   }
 });
 
-// The old correction tests above use a hypothetical verified adapter. The real
-// bridge must never advertise that capability or perform destructive editing.
-test("unverified iframe never types a temporary typo or Backspace", async () => {
+// Original opt-in iframe behavior remains available even without an annotated model.
+test("legacy iframe performs the explicitly enabled correction", async () => {
   const h = typingHarness({pauseAtTypo:false, verifiedCorrection:false});
   h.send("AT_PAGE_START", {text:"a", options:h.options});
   await flush(30);
   assert.equal(h.buffer.text,"HELLOa");
-  assert.deepEqual(h.backspaces,[]);
+  assert.deepEqual(h.backspaces,[6]);
   assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
 });

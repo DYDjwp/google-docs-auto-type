@@ -53,7 +53,7 @@
       <h2 class="section-name behavior-heading">Behavior</h2>
       <div class="behavior" role="group" aria-label="Typing behavior">
         <button type="button" id="typo" class="feature" aria-pressed="false">Typo</button>
-        <button type="button" id="fixTypo" class="feature" aria-pressed="false" title="Temporarily unavailable: Google Docs cannot verify safe correction">Fix typo (off)</button>
+        <button type="button" id="fixTypo" class="feature" aria-pressed="false" title="Legacy iframe correction: verify the resulting document">Fix typo</button>
         <button type="button" id="deepRest" class="feature" aria-pressed="false">Deep rest</button>
       </div>
 
@@ -87,8 +87,8 @@
         <h3>Typos</h3>
         <div class="fields">
           <label>Uncorrected typo, %<input id="typoChance" type="number" min="0" max="35" step="0.5"></label>
-          <label>Correction chance (currently inactive), %<input id="fixChance" type="number" min="0" max="35" step="0.5"></label>
-          <label>Correction delay (currently inactive), ms<input id="fixPauseMs" type="number" min="0" max="3000" step="50"></label>
+          <label>Corrected typo, %<input id="fixChance" type="number" min="0" max="35" step="0.5"></label>
+          <label>Correction delay, ms<input id="fixPauseMs" type="number" min="0" max="3000" step="50"></label>
         </div>
 
         <h3>Deep rest</h3>

@@ -4,16 +4,16 @@ Auto Type is a Chrome extension for entering text into Google Docs at a configur
 
 The project is distributed in two editions. Both use the same interface and typing controls; the Hybrid edition adds Chrome DevTools Protocol (CDP) as an alternative input method.
 
-**Current stable version: v1.0.4.** Download from [GitHub Releases](../../releases/latest). Experimental caret monitoring and recovery are developed separately on `dev/1.0.5`.
+**Current stable version: v1.0.4.1.** Download from [GitHub Releases](../../releases/latest). Experimental caret monitoring and recovery are developed separately on `dev/1.0.5`.
 
-Chrome requires a numeric `manifest.version` (`1.0.4`). The user-facing version label is provided separately as `manifest.version_name` (`1.0.4`). Updating a local unpacked installation requires reloading it in `chrome://extensions`; merging the repository does not automatically update an installed Chrome extension.
+Chrome requires a numeric `manifest.version` (`1.0.4.1`). The user-facing version label is provided separately as `manifest.version_name` (`1.0.4.1`). Updating a local unpacked installation requires reloading it in `chrome://extensions`; merging the repository does not automatically update an installed Chrome extension.
 
 **Release (v1.0.4):** Both editions register an optional uninstall feedback page. Feedback is submitted only when the user chooses Send feedback; the extension does not send document text or an identifier to it.
 
 **Configuration sharing (v1.0.4):** Expand Configuration sharing, select Token (compact) or JSON (readable), and Export & copy. Import automatically recognizes either format. Download JSON creates a local `auto-type-config.json` backup; Open JSON file loads it for review before clicking Import. Both formats include only typing settings, not drafts or document information. Full JSON exports use `{"schemaVersion":1,"settings":{...}}`; imports also accept a flat settings object (for example `{"advancedMode":true,"cpm":450}`). Missing fields use frozen version 1 defaults, unknown/invalid fields are rejected, and successful imports replace settings for the next session. The iframe edition adjusts unsupported CDP modes. No new permissions or server needed.
 
 The v1.0.4 popup fixes the logo alignment: the green period now stays inside the `at.` badge. This is a UI-only change.
-**Safety notice for current source:** CDP mode skips automatic typo-and-Backspace correction to prevent a queued destructive key reaching a different Docs iframe document. Normal typing and optional intentional typos remain available. Automatic correction is temporarily disabled in both transports because iframe event delivery cannot verify that a temporary character was accepted. Existing configuration fields are retained for compatibility. Previously downloaded ZIPs do not update automatically; download the stable release and reload any open Google Docs tabs so their content scripts match the updated popup.
+**Safety notice:** Fix typo is available as the original opt-in iframe correction behavior. It is not available in CDP mode, which never sends automatic Backspace. Trusted input, pause/stop and iframe changes interrupt correction. A successful synthetic key dispatch does not prove document acceptance; a silent ignored temporary typo can cause a wrong deletion. Review the document or leave Fix typo off for important documents. The experimental model-aware correction is developed on dev/1.0.5.
 
 **Stop and restart:** Stop reports immediately, but a pacing wait, keyboard/mouse lock cleanup or CDP detach can continue briefly. Start remains disabled while the existing task is finalizing and re-enables only after the page reports it is safe. This is based on the real cleanup state rather than a fixed timer. If the popup requests a document reload after an extension update, reload the Google Docs tab before starting another task.
 
@@ -24,7 +24,7 @@ The v1.0.4 popup fixes the logo alignment: the green period now stays inside the
 | Input method | Google Docs iframe | iframe first; CDP fallback |
 | Chrome debugger permission | Not required | Required |
 | Directory | [`iframe/`](iframe/) | [`hybrid/`](hybrid/) |
-| Latest stable package | `auto-type-1.0.4-iframe.zip` | `auto-type-1.0.4-hybrid.zip` |
+| Latest stable package | `auto-type-1.0.4.1-iframe.zip` | `auto-type-1.0.4.1-hybrid.zip` |
 
 The iframe edition is recommended unless CDP support is specifically needed. Chrome does not support requesting the `debugger` permission as an optional permission, so Hybrid is maintained as a separate extension package.
 
