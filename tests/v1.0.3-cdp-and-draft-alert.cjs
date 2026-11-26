@@ -192,7 +192,7 @@ test("P1: optional intentional CDP typo does not trigger destructive correction"
   assert.equal(h.backspaceQueued,false);
 });
 
-function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.4"}, holdStatus=false, recoverOnCleanup=false} = {}) {
+function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.4"}, holdStatus=false, holdCleanup=false, recoverOnCleanup=false} = {}) {
   class Element {
     constructor(){
       this.textContent="";this.value="";this.hidden=false;this.disabled=false;
@@ -214,6 +214,7 @@ function makePopupHarness({holdSave=false, edition="iframe", manifest={permissio
   const gate = holdSave ? new Promise(resolve=>{releaseSave=resolve;}) : Promise.resolve();
   let started=0,closed=false;
   let statusReads=0, releaseStatus;
+  let pageState="idle", cleanupReady=!holdCleanup;
   const intervals=[];
   const storage = new Map([["autoTypeDraft:17","Saved"],["autoTypeDraft:99","Old"]]);
   const chrome = {
@@ -222,12 +223,17 @@ function makePopupHarness({holdSave=false, edition="iframe", manifest={permissio
     tabs:{
       query:async query=>query.active ? [{id:17,url:"https://docs.google.com/document/d/xyz/edit"}] : [{id:17}],
       sendMessage:async(id,payload)=>{
-        if(payload.type==="AT_PAGE_START")started++;
+        if(payload.type==="AT_PAGE_START") { started++; pageState="running"; }
+        if(payload.type==="AT_PAGE_STOP") pageState="stopped";
+        if(payload.type==="AT_PAGE_PAUSE") pageState="paused";
+        if(payload.type==="AT_PAGE_RESUME") pageState="running";
         if(payload.type==="AT_PAGE_STATUS" && ++statusReads>1 && holdStatus) {
           await new Promise(resolve=>{releaseStatus=resolve;});
-          return {ok:true,status:{state:"running",index:0,total:1}};
+          return {ok:true,status:{state:"running",readyToStart:false,index:0,total:1}};
         }
-        return {ok:true,status:{state:payload.type==="AT_PAGE_START"?"running":payload.type==="AT_PAGE_PAUSE"?"paused":payload.type==="AT_PAGE_STOP"?"stopped":"idle",index:0,total:0}};
+        return {ok:true,status:{state:pageState,
+          readyToStart:!["running","paused"].includes(pageState) && (pageState!=="stopped" || cleanupReady),
+          index:0,total:0}};
       }
     },
     scripting:{executeScript:async()=>{}},
@@ -267,6 +273,7 @@ function makePopupHarness({holdSave=false, edition="iframe", manifest={permissio
       await flush();
     },
     releaseStatus(){releaseStatus?.();},
+    releaseCleanup(){cleanupReady=true;},
     releaseSave(){releaseSave?.();},
     setCanSave(v){canSave=v;},
     get started(){return started;},
@@ -456,5 +463,27 @@ for(const keyboardLock of [false,true]){
     assert.equal(h.backspaceQueued,false);
     assert.equal(h.trustedKeydowns,0);
     assert.equal(h.send("AT_PAGE_STATUS").status.index,1);
+  });
+}
+
+for (const edition of ["iframe","hybrid"]) {
+  test(edition+": Stop keeps Start disabled while cleanup is pending and re-enables it after status poll",async()=>{
+    const h=makePopupHarness({edition,holdCleanup:true});
+    h.setCanSave(true);
+    await h.ready();
+    await h.start("First draft");
+    assert.equal(h.started,1);
+    await h.get("stop").fire("click");
+    assert.match(h.get("state").textContent,/Stopped.*Cleaning up/);
+    assert.equal(h.get("start").disabled,true);
+    await h.get("start").fire("click");
+    assert.equal(h.started,1,"a synthetic early Start must be ignored");
+    await h.poll();
+    assert.equal(h.get("start").disabled,true,"status polling must not unlock during cleanup");
+    h.releaseCleanup();
+    await h.poll();
+    assert.equal(h.get("start").disabled,false,"fresh final status unlocks Start");
+    await h.get("start").fire("click");
+    assert.equal(h.started,2,"Start is usable after cleanup completes");
   });
 }
