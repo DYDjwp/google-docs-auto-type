@@ -1,50 +1,15 @@
 # Auto Type — Hybrid edition
 
-This build of Auto Type uses the Google Docs input iframe by default and can fall back to Chrome DevTools Protocol (CDP). It requires Chrome's `debugger` permission at installation.
+Uses the Google Docs input iframe with optional Chrome DevTools Protocol (CDP) fallback. Requires the debugger permission.
 
-## Version 1.0.4
-
-Stable release: compact AT1 configuration tokens, validated JSON import/export and local file backups, optional uninstall feedback, and corrected popup logo alignment. Review the root README before installing. The existing v1.0.3 safety fixes remain included.
-
-**Fix typo safety note:** Automatic typo correction is temporarily disabled in both transports: Google Docs cannot reliably verify that a temporary typo was accepted. The configured correction preferences remain stored for compatibility. Intentional, uncorrected typos remain optional through the separate Typo setting.
-
-## Version 1.0.3
-
-This patch fixes editor-frame guard registration and failed draft autosave. Version 1.0.3 adds an Advanced Mode Mouse lock and includes safe interruption handling for typo correction, closed-tab draft cleanup, and a draft-quota recovery path. The popup displays the installed version directly from its manifest.
-
-## Install
+## Installation
 
 1. Open `chrome://extensions` and enable **Developer mode**.
 2. Select **Load unpacked** and choose this directory.
-3. Open a Google Docs document with edit permission and place the cursor where text should be entered.
-4. Open the extension, paste text, configure the typing settings, and select **Start typing**.
-5. To clear saved popup text for the current document tab, use **Clear draft** next to the character count.
+3. Refresh Google Docs, place the text cursor, and open Auto Type.
 
-## Keyboard shortcuts
+See the [project README](../README.md) for usage, settings, shortcuts, privacy, and limitations. Download packaged builds from [Releases](https://github.com/DYDjwp/google-docs-auto-type/releases).
 
-- **Alt/Option + Shift + P** — toggle pause / resume.
-- **Alt/Option + Shift + X** — cancel the current task (does not undo text already inserted).
-- Customize shortcuts at `chrome://extensions/shortcuts`. Chrome or operating-system shortcut conflicts may prevent defaults from being assigned.
-- If you are typing in multiple documents, the focused document's task takes priority. If exactly one document is typing, shortcuts also work from another tab. If multiple background tasks are active, the shortcut is ignored to avoid stopping the wrong task.
-- Shortcuts work only while Chrome has focus; they do not work globally in other apps.
+## License
 
-## Advanced Mouse lock
-
-Enable **Advanced mode → During typing → Mouse lock** to ignore accidental mouse clicks, dragging, selection, and wheel scrolling in Google Docs while a task runs. It does not freeze the system cursor or require Pointer Lock API permissions. The floating Pause / Stop controls remain clickable. Mouse interactions work normally while paused and after Stop, completion, or error. Chrome keyboard shortcuts remain available.
-
-This is best-effort interception of trusted page events; Google Docs may handle some events earlier or in inaccessible frames. Verify the final document and use pause before deliberately changing the cursor.
-
-## Input behavior
-
-- Characters are sent as synthetic input events through Google Docs' input iframe.
-- Enter is handled as a key event; consecutive line breaks are supported.
-- The extension attempts to continue when the document is in a background tab, subject to Chrome and Google Docs limitations.
-- A dispatched event may not be accepted by Google Docs. Check the final document content.
-
-## CDP fallback
-
-The extension may attach Chrome's debugger interface following a detectable iframe error or when CDP is explicitly selected. Chrome does not allow the debugger permission to be declared optional. A silent failure of the iframe handler may not trigger a fallback.
-
-## Documentation and license
-
-See the [project README](../README.md) for settings, privacy information, limitations, and the AI-development disclosure. Distributed under the [MIT License](LICENSE), including its warranty and liability disclaimer.
+[MIT License](LICENSE).

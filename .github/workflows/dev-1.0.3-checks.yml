@@ -28,31 +28,67 @@ jobs:
       - name: Run regression tests
         run: node --test tests/*.cjs
 
-  release:
+  consolidate-release:
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Consolidate v1.0.4 stable release and documentation'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Package and publish stable
+        with:
+          fetch-depth: 0
+      - name: Consolidate published release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="$(node -p "require('./iframe/manifest.json').version")"
           label="$(node -p "require('./iframe/manifest.json').version_name")"
-          if [[ "$version" != "1.0.4.1" || "$label" != "$version" ]]; then
-            echo "Not the approved stable 1.0.4.1 release"; exit 0
-          fi
+          [[ "$version" == "1.0.4" && "$label" == "$version" ]]
           tag="v$version"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release already exists; not overwriting"; exit 0
-          fi
           mkdir -p "$RUNNER_TEMP/auto-type-release"
           for edition in iframe hybrid; do
             (cd "$edition" && zip -q -r "$RUNNER_TEMP/auto-type-release/auto-type-$version-$edition.zip" .)
             unzip -t "$RUNNER_TEMP/auto-type-release/auto-type-$version-$edition.zip"
           done
-          gh release create "$tag" "$RUNNER_TEMP"/auto-type-release/*.zip --target "$GITHUB_SHA" --title "Auto Type v$version" --latest --notes "Stable 1.0.4.1 restores the original optional iframe Fix typo behavior without changing the 1.0.4 audited draft, status, and CDP session protections. Synthetic iframe dispatch cannot confirm editor acceptance; review the document or leave Fix typo off for important documents. CDP does not perform automatic Backspace. The experimental model-aware caret features remain on dev/1.0.5."
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          ## What's new
+          - Compact configuration tokens and validated JSON import/export, including local file backups.
+          - Optional uninstall feedback with best-effort local redaction.
+          - Document-scoped drafts, improved save recovery, and safer Stop/Start cleanup.
+          - CDP document/session validation and improved popup status handling.
+          - Original optional iframe Fix typo remains available; CDP never performs automatic Backspace.
+
+          ## Installation
+          Download one ZIP below, extract it, reload the unpacked extension in Chrome, and refresh Google Docs.
+          Choose iframe unless you need CDP.
+
+          ## Known limitations
+          Google Docs may silently ignore synthetic input. Legacy iframe correction cannot verify that a temporary typo was accepted and may delete the wrong character. Review the resulting document; leave Fix typo off for important documents.
+          NOTES
+          old_tag="$(git ls-remote origin "refs/tags/$tag" | cut -f1)"
+          if [[ -n "$old_tag" && "$old_tag" != "$GITHUB_SHA" ]]; then
+            git push --force-with-lease="refs/tags/$tag:$old_tag" origin "$GITHUB_SHA:refs/tags/$tag"
+          elif [[ -z "$old_tag" ]]; then
+            git push origin "$GITHUB_SHA:refs/tags/$tag"
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$RUNNER_TEMP"/auto-type-release/*.zip --clobber
+            gh release edit "$tag" --target "$GITHUB_SHA" --title "Auto Type v$version" --prerelease=false --draft=false --latest --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create "$tag" "$RUNNER_TEMP"/auto-type-release/*.zip --target "$GITHUB_SHA" --title "Auto Type v$version" --latest --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          for obsolete in v1.0.4-beta v1.0.4.1; do
+            if gh release view "$obsolete" >/dev/null 2>&1; then
+              gh release delete "$obsolete" --yes --cleanup-tag
+            fi
+          done
+          old_ref="refs/heads/fix/beta-safety-audit"
+          old_head="$(git ls-remote origin "$old_ref" | cut -f1)"
+          if [[ -n "$old_head" ]]; then
+            [[ "$old_head" == "e086bd8b1f79bb294b1d970a4fad2ff2dd4c96f8" ]]
+            git fetch origin refs/heads/dev/1.0.5
+            git merge-base --is-ancestor "$old_head" FETCH_HEAD
+            git push --force-with-lease="$old_ref:$old_head" origin ":$old_ref"
+          fi
