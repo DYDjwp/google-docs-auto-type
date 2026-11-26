@@ -96,7 +96,7 @@ function typingHarness({pauseAtTypo = true, verifiedCorrection = false} = {}) {
       assert.ok(blockedWait, "must be waiting between characters");
     },
     fireTrusted(type) {
-      document.dispatchEvent({type, isTrusted: true});
+      document.dispatchEvent({type, isTrusted: true, target:{closest:()=>({})}});
     }
   };
 }
@@ -119,6 +119,7 @@ test("mouse interaction pauses without destructive correction",async()=>{
   h.send("AT_PAGE_START",{text:"ab",options:h.options});
   await h.waitForTemp();
   h.fireTrusted("pointerdown");
+  await flush();
   assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
   h.send("AT_PAGE_STOP");h.release();await flush();
   assert.equal(h.buffer.text,"HELLOa");

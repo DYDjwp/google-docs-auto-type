@@ -81,3 +81,22 @@ for(const edition of ["iframe","hybrid"]){
     assert.equal(edits.length,0);
   });
 }
+
+for(const edition of ["iframe","hybrid"]){
+  test(edition+" logical Selection adapter reads offsets without text or mutation",async()=>{
+    let request, reply;
+    const document={addEventListener:(type,fn)=>request=fn,
+      dispatchEvent:e=>reply=JSON.parse(e.detail)};
+    const window={_docs_annotate_canvas_by_ext:"existing-flag",
+      _docs_annotate_getAnnotatedText:async flag=>{
+        assert.equal(flag,"existing-flag");
+        return {getSelection:()=>[{anchor:9,focus:3}],
+          getText(){throw Error("must not read text");},setSelection(){throw Error("must not move caret");}};
+      }};
+    class E {constructor(type,opts){this.type=type;this.detail=opts?.detail;}}
+    vm.runInNewContext(read(edition+"/main-bridge.js"),{document,window,Event:E,CustomEvent:E});
+    request({detail:JSON.stringify({id:7,action:"selection"})});
+    await flush();
+    assert.deepEqual(reply,{id:7,ok:true,selection:{start:3,end:9}});
+  });
+}

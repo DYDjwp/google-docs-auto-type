@@ -91,7 +91,7 @@
   const BRIDGE_RESPONSE = "__auto_type_main_response_v3__";
   let bridgeSequence = 0;
 
-  function bridgeRequest(action, payload = {}) {
+  function bridgeRequest(action, payload = {}, timeoutMs = 1500) {
     return new Promise((resolve, reject) => {
       const id = ++bridgeSequence;
       let timer;
@@ -109,7 +109,7 @@
       timer = setTimeout(() => {
         document.removeEventListener(BRIDGE_RESPONSE, onResponse);
         reject(new Error("MAIN-world input bridge did not respond"));
-      }, 1500);
+      }, timeoutMs);
       document.dispatchEvent(new CustomEvent(BRIDGE_REQUEST, {
         detail: JSON.stringify({id, action, ...payload})
       }));
@@ -332,7 +332,69 @@
     if (task.guard || task.state !== "running") return;
     const watched = new Set();
     let closed = false, frame = null, timer, observer;
-    let lastPoint = null;
+    let innerDoc = null, innerWindow = null, gesture = null;
+    const editorSelector = ".kix-page, .kix-page-content-wrapper, .kix-canvas-tile-content, iframe.docs-texteventtarget-iframe";
+    const inEditor = event => {
+      if (event.currentTarget && (event.currentTarget === innerDoc || event.currentTarget === innerWindow))
+        return true;
+      return Boolean(event.target?.ownerDocument && event.target.ownerDocument === innerDoc) ||
+        Boolean(event.target?.closest?.(editorSelector)) ||
+        Boolean(event.composedPath?.().some(node => node?.matches?.(editorSelector)));
+    };
+    // Reuse the Probe's logical Selection shape only when the current page
+    // already exposes the API. No full-document read, fake flag, or polling.
+    const readSelection = async () => {
+      try {
+        const result = await bridgeRequest("selection", {}, 300);
+        const s = result.selection;
+        return s && Number.isInteger(s.start) && Number.isInteger(s.end) &&
+          s.start >= 0 && s.end >= s.start ? s : null;
+      } catch { return null; }
+    };
+    const clearGesture = g => {
+      if (gesture !== g) return;
+      gesture = null;
+      clearTimeout(g.timeout);
+      clearTimeout(g.settle);
+      g.resolve();
+    };
+    const finishGesture = async g => {
+      if (closed || gesture !== g || g.finishing) return;
+      g.finishing = true;
+      clearTimeout(g.timeout);
+      // Docs may apply Selection after the click event, as in the Probe.
+      await new Promise(resolve => {g.settle = setTimeout(resolve, 80);});
+      if (closed || gesture !== g) return;
+      const after = await readSelection();
+      if (closed || gesture !== g) return;
+      const before = g.before;
+      if (!g.reliable || !before || !after ||
+          before.start !== after.start || before.end !== after.end)
+        pause(before && after && g.reliable ? "Document caret moved" : "Document caret may have moved");
+      clearGesture(g);
+    };
+    const beginGesture = event => {
+      if (gesture) {
+        // If the pre-click snapshot wasn't ready before the native mousedown,
+        // it may already contain the new caret. Treat it as uncertain.
+        if (event.type === "mousedown" && !gesture.beforeReady) gesture.reliable = false;
+        return;
+      }
+      if (task.sending) { pause("Document caret may have moved"); return; }
+      let resolve;
+      const done = new Promise(r => {resolve = r;});
+      const g = gesture = {done, resolve, before:null, beforeReady:false,
+        reliable:event.type === "pointerdown", finishing:false};
+      g.timeout = setTimeout(() => {
+        if (gesture === g && !closed) { pause("Document caret may have moved"); clearGesture(g); }
+      }, 1000);
+      void readSelection().then(before => {
+        if (gesture !== g || closed) return;
+        g.before = before;
+        g.beforeReady = true;
+        if (!before) { pause("Document caret may have moved"); clearGesture(g); }
+      });
+    };
     const swallow = event => {
       if (event.cancelable) event.preventDefault();
       event.stopImmediatePropagation();
@@ -348,25 +410,21 @@
         if (task.options.keyboardLock) {
           swallow(event);
           if (type === "keydown" && event.key === "Escape") pause("Escape");
-        } else if (type === "keydown") {
+        } else if (type === "keydown" && (inEditor(event) || event.target === innerDoc?.activeElement)) {
           pause("Manual keyboard input");
         }
         return;
       }
       if (type === "pointermove" || type === "mousemove") {
-        const point = Number.isFinite(event.screenX) && Number.isFinite(event.screenY)
-          ? [event.screenX,event.screenY] : null;
-        const delta = Number(event.movementX) || Number(event.movementY);
-        const moved = Boolean(delta) || (point && lastPoint &&
-          (point[0] !== lastPoint[0] || point[1] !== lastPoint[1])) ||
-          (point && !lastPoint && event.movementX === undefined && event.movementY === undefined);
-        if (point) lastPoint = point;
-        if (moved) pause("Mouse moved");
-        return;
+        if (task.options.mouseLock && event.buttons) swallow(event);
+        return; // Hover and ordinary mouse movement never pause.
       }
-      if (task.options.mouseLock) swallow(event);
-      else if (["pointerdown","mousedown","click","wheel","dragstart","drop","selectstart"].includes(type))
-        pause("Manual mouse input");
+      if (task.options.mouseLock) { swallow(event); return; }
+      if (gesture && ["pointerup","mouseup","click"].includes(type)) {
+        void finishGesture(gesture);
+      } else if (inEditor(event) && ["pointerdown","mousedown"].includes(type)) {
+        beginGesture(event);
+      }
     };
     const unwatch = node => {
       watched.delete(node);
@@ -383,7 +441,7 @@
         frame = next;
         frame?.addEventListener?.("load", sync, true);
       }
-      let innerDoc, innerWindow;
+      innerDoc = innerWindow = null;
       try { innerDoc = frame?.contentDocument; innerWindow = frame?.contentWindow; }
       catch { /* inaccessible frame; the top document remains protected */ }
       const targets = new Set([window, document, innerWindow, innerDoc]
@@ -399,6 +457,7 @@
     const close = () => {
       if (closed) return;
       closed = true;
+      if (gesture) clearGesture(gesture);
       task.guard = null;
       if (timer !== undefined) clearInterval(timer);
       observer?.disconnect();
@@ -410,7 +469,7 @@
       try { sync(); }
       catch (error) { console.warn("[Auto Type] Input guard refresh failed", error); pause("Input protection unavailable"); }
     };
-    task.guard = {sync, close};
+    task.guard = {sync, close, pending: () => gesture?.done};
     try {
       sync();
       if (typeof MutationObserver === "function") {
@@ -442,7 +501,18 @@
   }
 
   async function sendCharacter(task, character) {
+    // Hold only during a real editor gesture; normal typing has no extra
+    // model reads. Recheck the task after the asynchronous hold.
+    for (;;) {
+      const pending = task.guard?.pending();
+      if (pending) { await pending; continue; }
+      if (task.state === "paused") { await pauseAwareWait(task, 0); continue; }
+      break;
+    }
+    if (!isActive(task)) return false;
     task.guard?.sync();
+    task.sending = true;
+    try {
     if (task.mode === "iframe") {
       try { await insertViaIframe(character, task.options.enterStrategy); return true; }
       catch (error) {
@@ -464,6 +534,7 @@
     try { await sendToBackground("AT_BG_INSERT", {char:character, sessionId:task.sessionId}); }
     finally { task.cdpKeyKind = null; task.cdpKeyInFlight = false; }
     return true;
+    } finally { task.sending = false; }
   }
 
   function pause(reason = "") {
@@ -613,7 +684,7 @@
     job = {
       chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, index: 0, state: "running", pauseReason: "", options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
-      guard: null
+      guard: null, sending: false
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

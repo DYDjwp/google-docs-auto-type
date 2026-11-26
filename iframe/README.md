@@ -1,6 +1,6 @@
 # Auto Type — iframe edition
 
-**Automatic pause:** Moving the mouse inside the Docs page or manually interacting with an unlocked editor pauses the task. Synthetic input and extension controls do not trigger this guard. Resume continues with the next unsent character at the current insertion point; review the document first. One already-dispatched input may finish. No collaborative-edit tracking or full-text verification is performed.
+**Automatic pause:** Ordinary mouse motion, scrolling, and toolbar clicks do not pause typing (optional Mouse Lock still blocks clicks/scrolling). With Mouse Lock off, a real editor click/drag temporarily holds input and compares the logical Selection before/after when the current page exposes the Annotated Text API. If the API or reliable baseline is unavailable, pause on the editor gesture rather than guess. Normal typing does not poll document text or selection. Resume continues at the current insertion point; review the document first. One already-dispatched character may finish. No collaborative-edit tracking is performed.
 
 **Safety:** Automatic typo correction is temporarily disabled because the Google Docs iframe cannot verify character acceptance. Configuration fields remain compatible.
 

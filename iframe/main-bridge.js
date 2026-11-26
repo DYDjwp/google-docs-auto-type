@@ -59,12 +59,35 @@
     legacyKey(target, "keyup", "Enter", 13);
   }
 
+  // Minimal read-only adapter from the Probe's annotated Selection API.
+  // The flag must already belong to an authorized integration; do not set it.
+  async function readSelection() {
+    const fn = window._docs_annotate_getAnnotatedText;
+    const flag = window._docs_annotate_canvas_by_ext;
+    if (typeof fn !== "function" || !flag) return null;
+    const api = await fn.call(window, flag);
+    if (typeof api?.getSelection !== "function") return null;
+    const raw = api.getSelection();
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    const a = Number(value?.start ?? value?.anchor ?? value?.base);
+    const b = Number(value?.end ?? value?.focus ?? value?.extent);
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) return null;
+    return {start:Math.min(a,b),end:Math.max(a,b)};
+  }
+
   document.addEventListener(REQUEST, event => {
     let request;
     let result = {ok: false, error: "Invalid bridge request"};
     try {
       request = JSON.parse(event.detail);
       if (!Number.isSafeInteger(request?.id)) throw new Error("Invalid request ID");
+      if (request.action === "selection") {
+        const respond = selection => document.dispatchEvent(new CustomEvent(RESPONSE, {
+          detail:JSON.stringify({id:request.id,ok:true,selection})
+        }));
+        void readSelection().then(respond, () => respond(null));
+        return;
+      }
       switch (request.action) {
         case "probe":
           getTarget();

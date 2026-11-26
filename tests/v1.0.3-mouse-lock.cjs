@@ -25,6 +25,7 @@ class FakeTarget {
   count(type) { return (this.listeners.get(type) || []).length; }
   dispatchEvent(event) {
     for (const handler of [...(this.listeners.get(event.type) || [])]) {
+      event.currentTarget = this;
       handler(event);
       if (event.stopped) break;
     }
@@ -32,12 +33,12 @@ class FakeTarget {
   }
 }
 
-function event(type, {trusted = true, buttons = 0, path = [], key = "", movementX = 0, movementY = 0} = {}) {
+function event(type, {trusted = true, buttons = 0, path = [], key = "", movementX = 0, movementY = 0, editor = false} = {}) {
   return {
     type,
     isTrusted: trusted,
     buttons,
-    key, movementX, movementY,
+    key, movementX, movementY, target: {closest: () => editor ? {} : null},
     cancelable: true,
     defaultPrevented: false,
     stopped: false,
@@ -50,7 +51,7 @@ function event(type, {trusted = true, buttons = 0, path = [], key = "", movement
 function makeHarness({
   edition = "iframe", advancedMode = true, mouseLock = true,
   showOverlay = false, startDelay = 1, failWait = false,
-  keyboardLock = false, fixTypo = false, blockWaits = 1
+  keyboardLock = false, fixTypo = false, blockWaits = 1, selection = null
 } = {}) {
   const window = new FakeTarget();
   const document = new FakeTarget();
@@ -66,6 +67,7 @@ function makeHarness({
   const logs = [];
   let overlayHost = null, overlayButtons = null;
   const edits = [];
+  let currentSelection = selection;
   const rand = Object.create(Math);
   rand.random = () => 0;
 
@@ -96,7 +98,7 @@ function makeHarness({
       if (["type", "backspace", "enter"].includes(request.action)) edits.push(request);
       queueMicrotask(() => document.dispatchEvent({
         type: "__auto_type_main_response_v3__",
-        detail: JSON.stringify({id: request.id, ok: true})
+        detail: JSON.stringify({id: request.id, ok: true, ...(request.action === "selection" ? {selection:currentSelection} : {})})
       }));
     }
     return realDispatch(payload);
@@ -139,6 +141,7 @@ function makeHarness({
     startDelay, speed:"fast", mode:"iframe", fixTypo, fixChance:35, fixPauseMs:400, jitter:0, rest:false};
   return {
     window, document, innerWindow, innerDoc, send, options, logs, edits,
+    setSelection(value) {currentSelection = value;},
     get overlayHost() {return overlayHost;},
     get overlayButtons() {return overlayButtons;},
     get waiting() {return Boolean(waitResolve);},
@@ -191,7 +194,7 @@ for (const edition of ["iframe","hybrid"]) {
       assert.equal(hover.defaultPrevented,false,"ordinary pointer movement stays possible");
       const drag=event("mousemove",{buttons:1});
       target.dispatchEvent(drag);
-      assert.equal(drag.defaultPrevented,false,"zero-delta movement does not pause or block");
+      assert.equal(drag.defaultPrevented,true,"dragging remains blocked with Mouse Lock on");
       const synthetic=event("click",{trusted:false});
       target.dispatchEvent(synthetic);
       assert.equal(synthetic.defaultPrevented,false,"programmatic events stay untouched");
@@ -233,7 +236,7 @@ for (const edition of ["iframe","hybrid"]) {
       const click=event("click");
       h.document.dispatchEvent(click);
       assert.equal(click.defaultPrevented,false);
-      assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
       h.send("AT_PAGE_STOP");
       await h.finish();
     }
@@ -340,22 +343,42 @@ test("review: floating button mousedown preserves editor focus",async()=>{
 
 for (const edition of ["iframe","hybrid"]) {
   for (const mouseLock of [false,true]) {
-    test(edition+" real mouse movement pauses even with mouseLock="+mouseLock,async()=>{
+    test(edition+" mouse movement never pauses (mouseLock="+mouseLock+")",async()=>{
       const h=makeHarness({edition,mouseLock,startDelay:0});
       await h.start("ab");
-      assert.equal(h.edits[0].char,"a");
-      h.innerDoc.dispatchEvent(event("mousemove",{trusted:false,movementX:8}));
-      h.innerDoc.dispatchEvent(event("mousemove"));
+      h.innerDoc.dispatchEvent(event("pointermove",{movementX:20}));
+      h.document.dispatchEvent(event("mousemove",{movementY:12,editor:true}));
       assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
-      h.innerDoc.dispatchEvent(event("pointermove",{movementX:1}));
-      assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
-      assert.equal(h.send("AT_PAGE_STATUS").status.pauseReason,"Mouse moved");
-      assert.equal(h.edits.length,1);
-      assert.equal(h.innerDoc.count("keydown"),0);
-      h.send("AT_PAGE_RESUME");
-      await h.finish();
+      h.send("AT_PAGE_STOP");await h.finish();
+    });
+  }
+  test(edition+" only editor gesture pauses when logical selection API unavailable",async()=>{
+    const h=makeHarness({edition,mouseLock:false,startDelay:0});
+    await h.start("ab");
+    h.document.dispatchEvent(event("pointerdown"));
+    h.document.dispatchEvent(event("wheel",{editor:true}));
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
+    h.innerDoc.dispatchEvent(event("pointerdown"));
+    await flush();
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+    assert.equal(h.edits.length,1);
+    h.send("AT_PAGE_RESUME");await h.finish();
+    assert.deepEqual(h.edits.map(e=>e.char),["a","b"]);
+  });
+  for(const moved of [false,true]){
+    test(edition+" compares actual selection after an editor click (moved="+moved+")",async()=>{
+      const h=makeHarness({edition,mouseLock:false,startDelay:0,selection:{start:5,end:5}});
+      await h.start("ab");
+      h.innerDoc.dispatchEvent(event("pointerdown"));
+      await flush();
+      if(moved) h.setSelection({start:2,end:2});
+      h.innerDoc.dispatchEvent(event("pointerup"));
+      h.release();
+      await new Promise(r=>setTimeout(r,120));await flush();
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,moved?"paused":"done");
+      assert.equal(h.edits.length,moved?1:2);
+      if(moved){h.send("AT_PAGE_RESUME");await h.finish();}
       assert.deepEqual(h.edits.map(e=>e.char),["a","b"]);
-      assert.equal(h.send("AT_PAGE_STATUS").status.state,"done");
     });
   }
   test(edition+" unlocked keyboard activity pauses; enabled keyboard lock consumes keys",async()=>{
@@ -376,7 +399,7 @@ for (const edition of ["iframe","hybrid"]) {
     }
   });
   test(edition+" frame replacement rebinds guard before next input and leaves no old listeners",async()=>{
-    const h=makeHarness({edition,startDelay:0,blockWaits:2});
+    const h=makeHarness({edition,mouseLock:false,startDelay:0,blockWaits:2});
     h.options.cpm=1800; // Each inter-character delay fits in one pacing slice.
     await h.start("abc");
     const {oldDoc,newDoc}=h.replaceFrame();
@@ -384,7 +407,8 @@ for (const edition of ["iframe","hybrid"]) {
     await h.waitForPacing();
     assert.equal(oldDoc.count("pointermove"),0);
     assert.equal(newDoc.count("pointermove"),1);
-    newDoc.dispatchEvent(event("pointermove",{movementY:2}));
+    newDoc.dispatchEvent(event("pointerdown"));
+    await flush();
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
     h.send("AT_PAGE_STOP");
     await h.finish();

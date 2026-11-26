@@ -25,7 +25,7 @@
         </div>
       </div>
       <textarea id="text" spellcheck="false" placeholder="Paste your text here…"></textarea>
-      <p class="help">Paragraphs and blank lines are kept. Moving the mouse in Docs pauses typing. Check the document before resuming or after completion. Text is not uploaded.</p>
+      <p class="help">Paragraphs and blank lines are kept. Changing the insertion point in the document may pause typing. Moving the mouse or scrolling does not. Check the document before resuming or after completion. Text is not uploaded.</p>
       <section id="draftError" class="draft-error" role="alert" aria-label="Draft save error" hidden>
         <p id="draftErrorText" class="draft-error-text"></p>
         <button id="dismissDraftError" type="button" aria-label="Dismiss draft save error">Dismiss</button>
@@ -105,7 +105,7 @@
           <span class="switch"><input id="keyboardLock" type="checkbox"><span class="switch-track"></span></span>
         </label>
         <label class="toggle-line option-row" for="mouseLock">
-          <span><b>Mouse lock</b><small>Block clicks and scrolling while typing. Mouse movement always pauses typing and releases both locks.</small></span>
+          <span><b>Mouse lock</b><small>Block clicks, dragging and scrolling while typing. Ordinary mouse movement stays free. Releases on pause / stop.</small></span>
           <span class="switch"><input id="mouseLock" type="checkbox"><span class="switch-track"></span></span>
         </label>
         <label class="toggle-line option-row" for="showOverlay">
