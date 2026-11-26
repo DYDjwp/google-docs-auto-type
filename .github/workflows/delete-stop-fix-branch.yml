@@ -1,0 +1,32 @@
+name: Delete merged Stop fix branch (one-time)
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/delete-stop-fix-branch.yml'
+permissions:
+  contents: write
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Delete only the already merged, unchanged fix branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="fix/stop-cleanup-readiness"
+          expected="0fcdccc3a4a6caa88de281a2b16cf6319fc145c9"
+          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" --jq '.object.sha')"
+          test "$current" = "$expected"
+          git merge-base --is-ancestor "$expected" "$GITHUB_SHA"
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" >/dev/null 2>&1; then
+            echo "::error::Branch deletion was not confirmed"
+            exit 1
+          fi
+          echo "Deleted merged branch: $branch"
