@@ -528,12 +528,15 @@ $("start").addEventListener("click", async () => {
     // Install the MAIN-world bridge from the popup, independently of the
     // background service worker. This prevents a missing runtime.onMessage
     // receiver from aborting an otherwise healthy iframe typing session.
-    if (!HAS_CDP || startOptions.mode !== "cdp") {
+    try {
       await chrome.scripting.executeScript({
         target: {tabId: activeTabId},
         files: ["main-bridge.js"],
         world: "MAIN"
       });
+    } catch (error) {
+      // The read-only caret adapter is optional for explicit CDP mode.
+      if (!HAS_CDP || startOptions.mode !== "cdp") throw error;
     }
     const answer = await pageMessage("AT_PAGE_START", {text, options: startOptions});
     if (!answer?.ok) throw new Error(answer?.error || "Could not start");

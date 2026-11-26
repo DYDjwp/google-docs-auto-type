@@ -355,7 +355,6 @@
       if (gesture !== g) return;
       gesture = null;
       clearTimeout(g.timeout);
-      clearTimeout(g.settle);
       g.resolve();
     };
     const finishGesture = async g => {
@@ -363,7 +362,7 @@
       g.finishing = true;
       clearTimeout(g.timeout);
       // Docs may apply Selection after the click event, as in the Probe.
-      await new Promise(resolve => {g.settle = setTimeout(resolve, 80);});
+      await new Promise(resolve => setTimeout(resolve, 80));
       if (closed || gesture !== g) return;
       const after = await readSelection();
       if (closed || gesture !== g) return;
@@ -410,7 +409,7 @@
         if (task.options.keyboardLock) {
           swallow(event);
           if (type === "keydown" && event.key === "Escape") pause("Escape");
-        } else if (type === "keydown" && (inEditor(event) || event.target === innerDoc?.activeElement)) {
+        } else if (type === "keydown" && (inEditor(event) || (event.target && event.target === innerDoc?.activeElement))) {
           pause("Manual keyboard input");
         }
         return;

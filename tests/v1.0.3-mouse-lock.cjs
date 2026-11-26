@@ -373,7 +373,7 @@ for (const edition of ["iframe","hybrid"]) {
       await flush();
       if(moved) h.setSelection({start:2,end:2});
       h.innerDoc.dispatchEvent(event("pointerup"));
-      h.release();
+      if(!moved) h.release();
       await new Promise(r=>setTimeout(r,120));await flush();
       assert.equal(h.send("AT_PAGE_STATUS").status.state,moved?"paused":"done");
       assert.equal(h.edits.length,moved?1:2);
