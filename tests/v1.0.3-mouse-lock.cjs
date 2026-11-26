@@ -377,6 +377,7 @@ for (const edition of ["iframe","hybrid"]) {
   });
   test(edition+" frame replacement rebinds guard before next input and leaves no old listeners",async()=>{
     const h=makeHarness({edition,startDelay:0,blockWaits:2});
+    h.options.cpm=1800; // Each inter-character delay fits in one pacing slice.
     await h.start("abc");
     const {oldDoc,newDoc}=h.replaceFrame();
     h.release();
