@@ -1,0 +1,19 @@
+name: Diagnose Stop cleanup tests (temporary)
+on:
+  push:
+    branches: [fix/stop-cleanup-readiness]
+permissions:
+  contents: read
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Isolate cleanup regression
+        run: |
+          set -o pipefail
+          timeout --signal=TERM 15s node --test tests/v1.0.4-stop-cleanup.cjs
