@@ -192,7 +192,7 @@ test("P1: optional intentional CDP typo does not trigger destructive correction"
   assert.equal(h.backspaceQueued,false);
 });
 
-function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.4"}, holdStatus=false, holdCleanup=false, initialPageState="idle", recoverOnCleanup=false} = {}) {
+function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.4"}, holdStatus=false, holdCleanup=false, initialPageState="idle", legacyStatus=false, recoverOnCleanup=false} = {}) {
   class Element {
     constructor(){
       this.textContent="";this.value="";this.hidden=false;this.disabled=false;
@@ -232,8 +232,9 @@ function makePopupHarness({holdSave=false, edition="iframe", manifest={permissio
           return {ok:true,status:{state:"running",readyToStart:false,index:0,total:1}};
         }
         return {ok:true,status:{state:pageState,
-          readyToStart:!["running","paused"].includes(pageState) && (pageState!=="stopped" || cleanupReady),
-          index:0,total:0}};
+          ...(legacyStatus ? {} : {
+            readyToStart:!["running","paused"].includes(pageState) && (pageState!=="stopped" || cleanupReady)
+          }),index:0,total:0}};
       }
     },
     scripting:{executeScript:async()=>{}},
@@ -488,5 +489,17 @@ for (const edition of ["iframe","hybrid"]) {
     assert.equal(h.get("start").disabled,false,"fresh final status unlocks Start");
     await h.get("start").fire("click");
     assert.equal(h.started,1,"Start is usable after cleanup completes");
+  });
+}
+
+for (const edition of ["iframe","hybrid"]) {
+  test(edition+": stale content script without readyToStart fails closed with a reload instruction",async()=>{
+    const h=makePopupHarness({edition,legacyStatus:true});
+    h.setCanSave(true);
+    await h.ready();
+    assert.equal(h.get("start").disabled,true);
+    assert.match(h.get("state").textContent,/Reload the Google Docs tab/i);
+    await h.get("start").fire("click");
+    assert.equal(h.started,0);
   });
 }
