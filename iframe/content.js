@@ -567,10 +567,54 @@
       }
     };
     task.syncCorrectionFrame = snapshot => watch(snapshot.doc);
+    const watchedFrames = new Set();
+    const frameSelector = "iframe.docs-texteventtarget-iframe";
     let interval;
+    let observer;
+    // MutationObserver callbacks run at a microtask checkpoint before a
+    // subsequent CDP keydown task. Do not wait for the one-second frame poll.
+    const isEditorFrameNode = node => node?.nodeType === 1 &&
+      Boolean(node.matches?.(frameSelector) || node.querySelector?.(frameSelector));
+    const relevantFrameMutation = record => {
+      if (record.type === "attributes") return isEditorFrameNode(record.target);
+      for (const node of record.addedNodes || []) {
+        if (isEditorFrameNode(node)) return true;
+      }
+      for (const node of record.removedNodes || []) {
+        if (isEditorFrameNode(node)) return true;
+      }
+      return false;
+    };
+    const syncFrameImmediately = () => {
+      try {
+        const snapshot = syncInputProtection(task);
+        // A real iframe is an EventTarget. Older test doubles can expose
+        // contentDocument without implementing frame event methods.
+        if (snapshot.frame && !watchedFrames.has(snapshot.frame) &&
+            typeof snapshot.frame.addEventListener === "function") {
+          snapshot.frame.addEventListener("load", syncFrameImmediately, true);
+          watchedFrames.add(snapshot.frame);
+        }
+        // Stop releases Keyboard lock, but the correction listener must
+        // follow the NEW document until the in-flight CDP call has returned.
+        if (task.correctionPending && task.cdpCorrectionFrame &&
+            !correctionFrameUnchanged(task.cdpCorrectionFrame)) {
+          task.correctionUnsafe = true;
+          if (task.state === "running" || task.state === "paused") stop();
+        }
+      } catch {
+        task.correctionUnsafe = true;
+        if (task.state === "running" || task.state === "paused") stop();
+      }
+    };
     const cleanup = () => {
       task.syncCorrectionFrame = null;
       if (interval !== undefined) clearInterval(interval);
+      observer?.disconnect();
+      for (const frame of watchedFrames) {
+        try { frame.removeEventListener("load", syncFrameImmediately, true); }
+        catch (error) { console.warn("[Auto Type] Editor frame load listener cleanup failed", error); }
+      }
       for (const node of observed) {
         for (const type of types) {
           try { node.removeEventListener(type, onUserAction, true); }
@@ -580,13 +624,19 @@
     };
     try {
       watch(document);
-      // A single poll keeps registration order correct for new frames.
-      const poll = () => {
-        try { syncInputProtection(task); }
-        catch { /* The next synchronous input check fails closed. */ }
-      };
-      poll();
-      interval = setInterval(poll, 1000);
+      // A newly inserted/replaced iframe is protected at the next microtask.
+      // The load listener also catches same-element document navigations.
+      if (typeof MutationObserver === "function") {
+        observer = new MutationObserver(records => {
+          if (records.some(relevantFrameMutation)) syncFrameImmediately();
+        });
+        observer.observe(document.documentElement || document, {
+          childList: true, subtree: true, attributes: true,
+          attributeFilter: ["class", "src"]
+        });
+      }
+      syncFrameImmediately();
+      interval = setInterval(syncFrameImmediately, 1000);
       return cleanup;
     } catch (error) { cleanup(); throw error; }
   }
