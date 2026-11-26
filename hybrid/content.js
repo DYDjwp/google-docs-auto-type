@@ -527,20 +527,30 @@
     const observed = new Set();
     const types = ["pointerdown", "mousedown", "keydown"];
     const onUserAction = event => {
-      if (job !== task || !task.correctionPending || !event.isTrusted) return;
-      // The panel's own click handlers decide whether to pause, stop or hide.
-      // A mouse press on its controls must not preempt those handlers.
-      if (isOverlayEvent(event)) return;
-      // CDP Input.dispatchKeyEvent creates trusted DOM events. During our
-      // own Backspace command, ignore only its expected keydown. Other real
-      // keys, mouse buttons and pointer events must still stop correction.
-      // Chrome does not provide a definitive origin bit for CDP events:
-      // this narrow in-flight exception minimizes accidental suppression.
-      if (task.cdpBackspaceExpected && isExpectedCdpKey(task, event) &&
-          event.type === "keydown") {
+      if (job !== task || !event.isTrusted) return;
+      // A CDP Backspace may reach Docs after Stop, Pause, or a caret move.
+      // Revalidate at trusted keydown; a send-time check is insufficient.
+      // Keep this listener until the in-flight background command finishes.
+      const key = event.key || (event.keyCode === 8 ? "Backspace" : "");
+      const cdpBackspace = task.cdpKeyInFlight && task.cdpKeyKind === "Backspace" &&
+        event.type === "keydown" && key === "Backspace";
+      if (cdpBackspace) {
+        const safe = task.cdpBackspaceExpected && task.correctionPending &&
+          task.state === "running" && !task.stopped && !task.paused &&
+          !task.correctionUnsafe && task.cdpCorrectionFrame &&
+          correctionFrameUnchanged(task.cdpCorrectionFrame);
         task.cdpBackspaceExpected = false;
+        if (safe) return;
+        // An invalid or duplicate in-flight key must never delete source text.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        task.correctionUnsafe = true;
+        if (task.state === "running" || task.state === "paused") stop();
         return;
       }
+      if (!task.correctionPending) return;
+      // Overlay controls handle their own pause/stop clicks.
+      if (isOverlayEvent(event)) return;
       task.correctionUnsafe = true;
       if (task.state === "running" || task.state === "paused") stop();
     };
@@ -623,9 +633,11 @@
     task.cdpKeyInFlight = true;
     task.cdpKeyKind = "Backspace";
     task.cdpBackspaceExpected = true;
+    task.cdpCorrectionFrame = correctionFrame;
     try { await sendToBackground("AT_BG_BACKSPACE"); }
     finally {
       task.cdpBackspaceExpected = false;
+      task.cdpCorrectionFrame = null;
       task.cdpKeyKind = null;
       task.cdpKeyInFlight = false;
     }
@@ -828,7 +840,8 @@
       chars: Array.from(text), index: 0, state: "running", stopped: false,
       paused: false, options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
-      correctionPending: false, correctionUnsafe: false, cdpBackspaceExpected: false
+      correctionPending: false, correctionUnsafe: false, cdpBackspaceExpected: false,
+      cdpCorrectionFrame: null
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

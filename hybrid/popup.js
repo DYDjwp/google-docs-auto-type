@@ -183,12 +183,12 @@ function syncConfigControls() {
   $("downloadConfig").disabled = blocked;
   $("openConfig").disabled = blocked;
   $("configFile").disabled = blocked;
-  if (configReady) {
-    for (const key of [...FIELDS, ...TOGGLES, ...FEATURES, "mode", "deepRestAt", "enterStrategy", "reset"])
-      $(key).disabled = configBusy;
-    for (const button of document.querySelectorAll(".speed")) button.disabled = configBusy;
-  }
-  $("start").disabled = !draftLoaded || starting || clearingDraft || controlPending || configBusy ||
+  // Disable every setting control until initial storage retrieval finishes.
+  // Event guards below also block synthetic events during that async window.
+  for (const key of [...FIELDS, ...TOGGLES, ...FEATURES, "mode", "deepRestAt", "enterStrategy", "reset"])
+    $(key).disabled = blocked;
+  for (const button of document.querySelectorAll(".speed")) button.disabled = blocked;
+  $("start").disabled = !configReady || !draftLoaded || starting || clearingDraft || controlPending || configBusy ||
     ["paused", "running"].includes(currentState);
 }
 $("exportConfig").addEventListener("click", async () => {
@@ -319,7 +319,7 @@ function renderStatus(status) {
   $("percentage").textContent = `${percentage}%`;
   $("pause").disabled = !["paused", "running"].includes(state);
   $("stop").disabled = !["paused", "running"].includes(state);
-  $("start").disabled = !draftLoaded || starting || clearingDraft || controlPending || configBusy ||
+  $("start").disabled = !configReady || !draftLoaded || starting || clearingDraft || controlPending || configBusy ||
     ["paused", "running"].includes(state);
   $("pause").textContent = state === "paused" ? "Resume" : "Pause";
   const messages = {
@@ -439,7 +439,7 @@ $("clearDraft").addEventListener("click", async () => {
 
 for (const button of document.querySelectorAll(".speed")) {
   button.addEventListener("click", async () => {
-    if (configBusy) return;
+    if (!configReady || configBusy) return;
     options.speed = button.dataset.speed;
     renderOptions();
     await persist();
@@ -447,7 +447,7 @@ for (const button of document.querySelectorAll(".speed")) {
 }
 for (const key of FIELDS) {
   $(key).addEventListener("change", async () => {
-    if (configBusy) return;
+    if (!configReady || configBusy) return;
     options[key] = sanitize(key, $(key).value);
     renderOptions();
     await persist();
@@ -455,7 +455,7 @@ for (const key of FIELDS) {
 }
 for (const key of TOGGLES) {
   $(key).addEventListener("change", async () => {
-    if (configBusy) return;
+    if (!configReady || configBusy) return;
     options[key] = $(key).checked;
     renderOptions();
     await persist();
@@ -463,7 +463,7 @@ for (const key of TOGGLES) {
 }
 for (const key of FEATURES) {
   $(key).addEventListener("click", async () => {
-    if (configBusy) return;
+    if (!configReady || configBusy) return;
     options[key] = !options[key];
     renderOptions();
     await persist();
@@ -471,13 +471,13 @@ for (const key of FEATURES) {
 }
 for (const key of ["mode", "deepRestAt", "enterStrategy"]) {
   $(key).addEventListener("change", async () => {
-    if (configBusy) return;
+    if (!configReady || configBusy) return;
     options[key] = $(key).value;
     await persist();
   });
 }
 $("reset").addEventListener("click", async () => {
-  if (configBusy) return;
+  if (!configReady || configBusy) return;
   options = {...DEFAULTS, advancedMode: true};
   if (!HAS_CDP) options.mode = "iframe";
   renderOptions();
@@ -489,7 +489,7 @@ $("start").addEventListener("click", async () => {
   const text = $("text").value;
   if (!text.trim()) { setMessage("Paste some text first", "error"); return; }
   if (text.length > 200000) { setMessage("Maximum 200,000 characters per session", "error"); return; }
-  if (!activeTabId || !draftLoaded || clearingDraft || starting || controlPending || configBusy ||
+  if (!configReady || !activeTabId || !draftLoaded || clearingDraft || starting || controlPending || configBusy ||
       ["paused", "running"].includes(currentState)) return;
   starting = true;
   ++statusRevision;
@@ -561,4 +561,6 @@ window.addEventListener("pagehide", () => {
       savedDraftRevision !== draftRevision)
     void autosaveDraft($("text").value);
 });
+// Synchronously lock settings before the first awaited storage operation.
+syncConfigControls();
 init().catch(e => setMessage(`Initialization failed: ${e.message}`, "error"));
