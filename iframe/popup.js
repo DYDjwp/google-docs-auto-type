@@ -27,6 +27,7 @@ $("extensionVersion").textContent = displayVersion ? `v${displayVersion}` : "";
 let options = {...DEFAULTS};
 let activeTabId = null;
 let currentState = "idle";
+let currentReadyToStart = false; // Waiting for the first authoritative page status.
 let timer = null;
 let statusRevision = 0;
 let controlPending = false;
@@ -174,6 +175,11 @@ function configMessage(message, error = false) {
   $("configStatus").textContent = message;
   $("configStatus").classList.toggle("config-error", error);
 }
+function syncStartButton() {
+  // The page, not its visible state label, owns the cleanup lifecycle.
+  $("start").disabled = !currentReadyToStart || !configReady || !draftLoaded ||
+    !activeTabId || starting || clearingDraft || controlPending || configBusy;
+}
 function syncConfigControls() {
   const blocked = !configReady || configBusy;
   $("exportConfig").disabled = blocked;
@@ -188,8 +194,7 @@ function syncConfigControls() {
   for (const key of [...FIELDS, ...TOGGLES, ...FEATURES, "mode", "deepRestAt", "enterStrategy", "reset"])
     $(key).disabled = blocked;
   for (const button of document.querySelectorAll(".speed")) button.disabled = blocked;
-  $("start").disabled = !configReady || !draftLoaded || starting || clearingDraft || controlPending || configBusy ||
-    ["paused", "running"].includes(currentState);
+  syncStartButton();
 }
 $("exportConfig").addEventListener("click", async () => {
   if (!configReady || configBusy) return;
@@ -314,13 +319,15 @@ function renderStatus(status) {
   if (!status) return;
   const {state, index = 0, total = 0, mode = "", error = ""} = status;
   currentState = state;
+  // Missing readiness from an outdated content script fails closed rather
+  // than re-enabling Start while its cleanup status is unknown.
+  currentReadyToStart = status.readyToStart === true;
   const percentage = total ? Math.round(100 * index / total) : 0;
   $("progress").style.width = `${percentage}%`;
   $("percentage").textContent = `${percentage}%`;
   $("pause").disabled = !["paused", "running"].includes(state);
   $("stop").disabled = !["paused", "running"].includes(state);
-  $("start").disabled = !configReady || !draftLoaded || starting || clearingDraft || controlPending || configBusy ||
-    ["paused", "running"].includes(state);
+  syncStartButton();
   $("pause").textContent = state === "paused" ? "Resume" : "Pause";
   const messages = {
     idle: "Ready · Text will be typed into the current Google Doc",
@@ -330,7 +337,16 @@ function renderStatus(status) {
     stopped: `Stopped at ${index}/${total}${error ? " · " + error : ""}`,
     error: `Error: ${error}`
   };
-  setMessage(messages[state] || "Ready", state === "error" ? "error" : state === "done" ? "ok" : "idle");
+  // Old content scripts can survive an unpacked-extension reload in an
+  // already open Docs tab. A missing readiness field is not proof of safety:
+  // require a document reload rather than silently leaving Start unusable.
+  if (typeof status.readyToStart !== "boolean") {
+    setMessage("Auto Type was updated. Reload the Google Docs tab to activate the new typing script.", "error");
+    return;
+  }
+  const cleaning = !currentReadyToStart && ["stopped", "done", "error"].includes(state);
+  setMessage((messages[state] || "Ready") + (cleaning ? " · Cleaning up…" : ""),
+    state === "error" ? "error" : state === "done" && !cleaning ? "ok" : "idle");
 }
 
 async function refresh() {
@@ -489,8 +505,8 @@ $("start").addEventListener("click", async () => {
   const text = $("text").value;
   if (!text.trim()) { setMessage("Paste some text first", "error"); return; }
   if (text.length > 200000) { setMessage("Maximum 200,000 characters per session", "error"); return; }
-  if (!configReady || !activeTabId || !draftLoaded || clearingDraft || starting || controlPending || configBusy ||
-      ["paused", "running"].includes(currentState)) return;
+  if (!currentReadyToStart || !configReady || !activeTabId || !draftLoaded ||
+      clearingDraft || starting || controlPending || configBusy) return;
   starting = true;
   ++statusRevision;
   const startOptions = {...options};
@@ -525,8 +541,7 @@ $("start").addEventListener("click", async () => {
     starting = false;
     $("text").disabled = false;
     $("clearDraft").disabled = !draftLoaded || clearingDraft;
-    $("start").disabled = !draftLoaded || clearingDraft || controlPending || configBusy ||
-      ["paused", "running"].includes(currentState);
+    syncStartButton();
   }
 });
 async function controlTask(type) {
@@ -546,7 +561,7 @@ async function controlTask(type) {
     const active = ["paused", "running"].includes(currentState);
     $("pause").disabled = !active;
     $("stop").disabled = !active;
-    $("start").disabled = !draftLoaded || clearingDraft || configBusy || active;
+    syncStartButton();
   }
 }
 $("pause").addEventListener("click", () =>
