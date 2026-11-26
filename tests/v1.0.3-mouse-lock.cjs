@@ -38,7 +38,7 @@ function event(type, {trusted = true, buttons = 0, path = [], key = "", movement
     type,
     isTrusted: trusted,
     buttons,
-    key, movementX, movementY, target: {closest: () => editor ? {} : null},
+    key, movementX, movementY, target: {closest: selector => editor && selector.includes(".kix-page") ? {} : null},
     cancelable: true,
     defaultPrevented: false,
     stopped: false,
@@ -95,10 +95,14 @@ function makeHarness({
   document.dispatchEvent = payload => {
     if (payload.type === "__auto_type_main_request_v3__") {
       const request = JSON.parse(payload.detail);
-      if (["type", "backspace", "enter"].includes(request.action)) edits.push(request);
+      if (["type", "backspace", "enter"].includes(request.action)) {
+        edits.push(request);
+        if (currentSelection) {const at=currentSelection.start+(request.char?.length || 1);currentSelection={start:at,end:at};}
+      }
+      if(request.action==="restoreSelection") currentSelection=request.selection;
       queueMicrotask(() => document.dispatchEvent({
         type: "__auto_type_main_response_v3__",
-        detail: JSON.stringify({id: request.id, ok: true, ...(request.action === "selection" ? {selection:currentSelection} : {})})
+        detail: JSON.stringify({id: request.id, ok: true, ...(request.action === "selection" ? {selection:currentSelection} : request.action === "restoreSelection" ? {restored:true} : {})})
       }));
     }
     return realDispatch(payload);
@@ -377,7 +381,7 @@ for (const edition of ["iframe","hybrid"]) {
       await new Promise(r=>setTimeout(r,120));await flush();
       assert.equal(h.send("AT_PAGE_STATUS").status.state,moved?"paused":"done");
       assert.equal(h.edits.length,moved?1:2);
-      if(moved){h.send("AT_PAGE_RESUME");await h.finish();}
+      if(moved){h.send("AT_PAGE_RESUME");await flush();await h.finish();}
       assert.deepEqual(h.edits.map(e=>e.char),["a","b"]);
     });
   }

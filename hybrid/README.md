@@ -1,14 +1,13 @@
 # Auto Type — Hybrid edition
 
-**Automatic pause:** Ordinary mouse motion, scrolling, and toolbar clicks do not pause typing (optional Mouse Lock still blocks clicks/scrolling). With Mouse Lock off, a real editor click/drag temporarily holds input and compares the logical Selection before/after when the current page exposes the Annotated Text API. If the API or reliable baseline is unavailable, pause on the editor gesture rather than guess. Normal typing does not poll document text or selection. Resume continues at the current insertion point; review the document first. One already-dispatched character may finish. No collaborative-edit tracking is performed.
+**Automatic pause and resume:** Ordinary mouse movement and scrolling do not pause. Editor clicks or unlocked keyboard input can pause. Resume restores a confirmed UTF-16 Selection bookmark when the existing Annotated Text API is available; otherwise restore manually. Fix typo uses verified iframe replacement only; interruption cancels the task and may leave a temporary typo. No collaborative edit tracking or blind Backspace.
 
 This build of Auto Type uses the Google Docs input iframe by default and can fall back to Chrome DevTools Protocol (CDP). It requires Chrome's `debugger` permission at installation.
 
 ## Version 1.0.4-beta
 
 Pre-release build: compact AT1 configuration tokens, validated JSON import/export and local file backups, optional uninstall feedback, and corrected popup logo alignment. Review the root README before using a beta build. The existing v1.0.3 safety fixes remain included.
-
-**Fix typo safety note:** Automatic typo correction is temporarily disabled in both transports: Google Docs cannot reliably verify that a temporary typo was accepted. The configured correction preferences remain stored for compatibility. Intentional, uncorrected typos remain optional through the separate Typo setting.
+**Safety:** Model-confirmed replacement requires the existing Annotated Text API. CDP does not issue automatic Backspace. Reload Docs after updating.
 
 ## Version 1.0.3
 

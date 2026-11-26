@@ -59,20 +59,84 @@
     legacyKey(target, "keyup", "Enter", 13);
   }
 
-  // Minimal read-only adapter from the Probe's annotated Selection API.
-  // The flag must already belong to an authorized integration; do not set it.
-  async function readSelection() {
+  // Probe v1.6: fresh accessor, UTF-16 positions, read-back verification.
+  const wait = ms => new Promise(resolve => setTimeout(resolve,ms));
+  let operation = null;
+  async function annotated() {
     const fn = window._docs_annotate_getAnnotatedText;
     const flag = window._docs_annotate_canvas_by_ext;
     if (typeof fn !== "function" || !flag) return null;
-    const api = await fn.call(window, flag);
-    if (typeof api?.getSelection !== "function") return null;
-    const raw = api.getSelection();
+    return await fn.call(window,flag);
+  }
+  function selection(api) {
+    const raw = api?.getSelection?.();
     const value = Array.isArray(raw) ? raw[0] : raw;
     const a = Number(value?.start ?? value?.anchor ?? value?.base);
     const b = Number(value?.end ?? value?.focus ?? value?.extent);
     if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) return null;
     return {start:Math.min(a,b),end:Math.max(a,b)};
+  }
+  const equal = (a,b) => !!a && !!b && a.start === b.start && a.end === b.end;
+  const valid = s => s && Number.isInteger(s.start) && Number.isInteger(s.end) &&
+    s.start >= 0 && s.end >= s.start;
+  async function readSelection() {return selection(await annotated());}
+  const currentFrame = () => document.querySelector("iframe.docs-texteventtarget-iframe")?.contentDocument;
+  const locationKey = () => window.location?.pathname || "";
+  async function perform(request, action) {
+    if (operation) throw Error("Another document operation is still running");
+    if (typeof request.sessionId !== "string" || !request.sessionId) throw Error("Missing session ID");
+    const op = operation = {sessionId:request.sessionId,cancelled:false,frame:currentFrame(),path:locationKey()};
+    const active = () => !op.cancelled && operation === op && op.path === locationKey() && op.frame === currentFrame();
+    try {return await action(active);}
+    finally {if (operation === op) operation = null;}
+  }
+  async function restore(request,active) {
+    const wanted = request.selection;
+    if (!valid(wanted)) return {restored:false};
+    const api = await annotated();
+    if (!active() || typeof api?.setSelection !== "function" || typeof api.getText !== "function") return {restored:false};
+    const text = api.getText();
+    if (typeof text !== "string" || wanted.end > text.length) return {restored:false};
+    if (!equal(selection(api),wanted)) {
+      currentFrame()?.querySelector?.('[contenteditable="true"]')?.focus?.();
+      if (!active()) return {restored:false};
+      api.setSelection(wanted.start,wanted.end);
+      await wait(90);
+    }
+    return {restored:active() && equal(selection(api),wanted)};
+  }
+  async function correct(request,active) {
+    const {wrong,correct:character,delay} = request;
+    if (typeof wrong !== "string" || typeof character !== "string" ||
+        [...wrong].length !== 1 || [...character].length !== 1 || wrong === character)
+      throw Error("Invalid correction");
+    const api = await annotated();
+    if (!active()) return {corrected:false};
+    if (typeof api?.getText !== "function" || typeof api.setSelection !== "function") return {skipped:true};
+    const before = api.getText(), point = selection(api);
+    if (typeof before !== "string" || !point || point.start !== point.end || point.end > before.length)
+      return {skipped:true};
+    const start=point.start,end=start+wrong.length;
+    const temporary=before.slice(0,start)+wrong+before.slice(start);
+    const expected=before.slice(0,start)+character+before.slice(start);
+    if (!active()) return {corrected:false};
+    typeCharacter(wrong);
+    await wait(Math.max(90,Math.min(3000,Number(delay)||0)));
+    if (!active()) return {corrected:false};
+    const live=await annotated();
+    if (!active() || typeof live?.getText !== "function" || typeof live.setSelection !== "function" ||
+        live.getText() !== temporary || !equal(selection(live),{start:end,end})) return {corrected:false};
+    live.setSelection(start,end);
+    await wait(90);
+    if (!active() || live.getText() !== temporary || !equal(selection(live),{start,end})) return {corrected:false};
+    typeCharacter(character);
+    await wait(90);
+    if (!active()) return {corrected:false};
+    const final=await annotated();
+    const wanted={start:start+character.length,end:start+character.length};
+    if (!active() || typeof final?.getText !== "function" || final.getText() !== expected ||
+        !equal(selection(final),wanted)) return {corrected:false};
+    return {corrected:true,selection:wanted};
   }
 
   document.addEventListener(REQUEST, event => {
@@ -81,14 +145,19 @@
     try {
       request = JSON.parse(event.detail);
       if (!Number.isSafeInteger(request?.id)) throw new Error("Invalid request ID");
-      if (request.action === "selection") {
-        const respond = selection => document.dispatchEvent(new CustomEvent(RESPONSE, {
-          detail:JSON.stringify({id:request.id,ok:true,selection})
+      if (request.action === "cancelOperation") {
+        if (operation?.sessionId === request.sessionId) operation.cancelled = true;
+      } else if (["selection","restoreSelection","correct"].includes(request.action)) {
+        const respond = value => document.dispatchEvent(new CustomEvent(RESPONSE,{
+          detail:JSON.stringify({id:request.id,ok:true,...value})
         }));
-        void readSelection().then(respond, () => respond(null));
+        const work=request.action === "selection" ? readSelection().then(selection=>({selection})) :
+          perform(request,active=>request.action === "restoreSelection" ? restore(request,active) : correct(request,active));
+        void work.then(respond,()=>respond(request.action === "selection" ? {selection:null} : {}));
         return;
       }
       switch (request.action) {
+        case "cancelOperation": break;
         case "probe":
           getTarget();
           break;

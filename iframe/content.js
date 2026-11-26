@@ -38,8 +38,10 @@
       startDelay: clamp(o.startDelay ?? 1, 0, 15),
       mode: HAS_CDP && ["auto", "iframe", "cdp"].includes(o.mode) ? o.mode : "iframe",
       enterStrategy: ["keydown", "keypress", "both"].includes(o.enterStrategy) ? o.enterStrategy : "keydown",
-      typo: Boolean(o.typo), deepRest: Boolean(o.deepRest),
+      typo: Boolean(o.typo), fixTypo: Boolean(o.fixTypo), deepRest: Boolean(o.deepRest),
       typoChance: clamp(o.typoChance ?? 1.5, 0, 35),
+      fixChance: clamp(o.fixChance ?? 3, 0, 35),
+      fixPauseMs: clamp(o.fixPauseMs ?? 400, 0, 3000),
       deepRestAt: ["word", "sentence", "both"].includes(o.deepRestAt) ? o.deepRestAt : "both",
       deepChance: clamp(o.deepChance ?? 14, 0, 100),
       deepMinMs: clamp(o.deepMinMs ?? 1300, 0, 120000),
@@ -54,7 +56,7 @@
     if (!job) return {state: "idle", index: 0, total: 0, mode: "", error: "", readyToStart: true};
     return {
       state: job.state, index: job.index, total: job.chars.length,
-      mode: job.mode, error: job.error || "", pauseReason: job.pauseReason || "",
+      mode: job.mode, error: job.error || "", pauseReason: job.pauseReason || "", manualResume: job.state === "paused" && !job.bookmark, restoring: !!job.restoring,
       // "stopped", "done" and "error" may be reported while asynchronous
       // waits, debugger detach, and event-listener cleanup remain in flight.
       // Only a finalized task can safely be replaced with a new task.
@@ -306,8 +308,8 @@
     };
     overlay.status.textContent = labels[status.state] || "preparing";
     overlay.fill.style.width = `${progress}%`;
-    overlay.toggle.textContent = status.state === "paused" ? "Resume" : "Pause";
-    overlay.toggle.disabled = !["paused", "running"].includes(status.state);
+    overlay.toggle.textContent = status.restoring ? "Restoring…" : status.state === "paused" ? (status.manualResume ? "Resume manually" : "Resume") : "Pause";
+    overlay.toggle.disabled = status.restoring || !["paused", "running"].includes(status.state);
     overlay.stop.disabled = !["paused", "running"].includes(status.state);
     overlay.toggle.style.opacity = overlay.toggle.disabled ? ".45" : "1";
     overlay.stop.style.opacity = overlay.stop.disabled ? ".45" : "1";
@@ -321,6 +323,16 @@
     ));
   }
 
+  const validSelection = s => s && Number.isInteger(s.start) && Number.isInteger(s.end) &&
+    s.start >= 0 && s.end >= s.start;
+  const sameSelection = (a,b) => validSelection(a) && validSelection(b) &&
+    a.start === b.start && a.end === b.end;
+  async function readSelection() {
+    try {
+      const result = await bridgeRequest("selection", {}, 300);
+      return validSelection(result.selection) ? result.selection : null;
+    } catch { return null; }
+  }
   // One input guard per running task. Both top document and live editor
   // iframe are observed; paused/stopped tasks never intercept input.
   const POINTER_EVENTS = ["pointermove", "mousemove", "pointerdown", "pointerup",
@@ -333,23 +345,23 @@
     const watched = new Set();
     let closed = false, frame = null, timer, observer;
     let innerDoc = null, innerWindow = null, gesture = null;
-    const editorSelector = ".kix-page, .kix-page-content-wrapper, .kix-canvas-tile-content, iframe.docs-texteventtarget-iframe";
+    const editorSelector = ".kix-page, .kix-page-content-wrapper, .kix-canvas-tile-content, .kix-appview-editor, .kix-zoomdocumentplugin-outer, iframe.docs-texteventtarget-iframe";
+    const chromeSelector = ".docs-toolbar, .docs-titlebar, .docs-menubar, .kix-ruler, .docs-sidebar, [role=menu], [role=dialog], [role=scrollbar]";
     const inEditor = event => {
-      if (event.currentTarget && (event.currentTarget === innerDoc || event.currentTarget === innerWindow))
-        return true;
-      return Boolean(event.target?.ownerDocument && event.target.ownerDocument === innerDoc) ||
-        Boolean(event.target?.closest?.(editorSelector)) ||
-        Boolean(event.composedPath?.().some(node => node?.matches?.(editorSelector)));
-    };
-    // Reuse the Probe's logical Selection shape only when the current page
-    // already exposes the API. No full-document read, fake flag, or polling.
-    const readSelection = async () => {
-      try {
-        const result = await bridgeRequest("selection", {}, 300);
-        const s = result.selection;
-        return s && Number.isInteger(s.start) && Number.isInteger(s.end) &&
-          s.start >= 0 && s.end >= s.start ? s : null;
-      } catch { return null; }
+      if (event.currentTarget && (event.currentTarget === innerDoc || event.currentTarget === innerWindow)) return true;
+      if (event.target?.ownerDocument && event.target.ownerDocument === innerDoc) return true;
+      const path = event.composedPath?.() || [];
+      if (event.target?.closest?.(chromeSelector) || path.some(node => node?.matches?.(chromeSelector))) return false;
+      if (event.target?.closest?.(editorSelector) || path.some(node => node?.matches?.(editorSelector))) return true;
+      if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return false;
+      const hit = document.elementFromPoint?.(event.clientX,event.clientY);
+      if (hit?.closest?.(chromeSelector)) return false;
+      if (hit?.closest?.(editorSelector)) return true;
+      return [...(document.querySelectorAll?.(".kix-page, .kix-page-content-wrapper") || [])].some(page => {
+        const r = page.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && event.clientX >= r.left && event.clientX <= r.right &&
+          event.clientY >= r.top && event.clientY <= r.bottom;
+      });
     };
     const clearGesture = g => {
       if (gesture !== g) return;
@@ -379,18 +391,20 @@
         if (event.type === "mousedown" && !gesture.beforeReady) gesture.reliable = false;
         return;
       }
-      if (task.sending) { pause("Document caret may have moved"); return; }
+      if (task.sending || task.correcting) { pause("Document caret may have moved"); return; }
       let resolve;
       const done = new Promise(r => {resolve = r;});
-      const g = gesture = {done, resolve, before:null, beforeReady:false,
-        reliable:event.type === "pointerdown", finishing:false};
+      const g = gesture = {done, resolve, before:task.bookmark, beforeReady:!!task.bookmark,
+        reliable:!!task.bookmark || event.type === "pointerdown", finishing:false};
       g.timeout = setTimeout(() => {
         if (gesture === g && !closed) { pause("Document caret may have moved"); clearGesture(g); }
       }, 1000);
+      if (g.beforeReady) return;
       void readSelection().then(before => {
         if (gesture !== g || closed) return;
         g.before = before;
         g.beforeReady = true;
+        if (before && g.reliable) task.bookmark = before;
         if (!before) { pause("Document caret may have moved"); clearGesture(g); }
       });
     };
@@ -421,8 +435,9 @@
       if (task.options.mouseLock) { swallow(event); return; }
       if (gesture && ["pointerup","mouseup","click"].includes(type)) {
         void finishGesture(gesture);
-      } else if (inEditor(event) && ["pointerdown","mousedown"].includes(type)) {
+      } else if (inEditor(event) && ["pointerdown","mousedown","click"].includes(type)) {
         beginGesture(event);
+        if (type === "click" && gesture) void finishGesture(gesture);
       }
     };
     const unwatch = node => {
@@ -511,9 +526,11 @@
     if (!isActive(task)) return false;
     task.guard?.sync();
     task.sending = true;
+    const previous = task.bookmark;
+    let sent = false;
     try {
     if (task.mode === "iframe") {
-      try { await insertViaIframe(character, task.options.enterStrategy); return true; }
+      try { await insertViaIframe(character, task.options.enterStrategy); sent = true; return true; }
       catch (error) {
         // Only retry explicit pre-dispatch failures; a lost reply may mean
         // the character has already been delivered.
@@ -532,38 +549,100 @@
     task.cdpKeyKind = character === "\n" ? "Enter" : null;
     try { await sendToBackground("AT_BG_INSERT", {char:character, sessionId:task.sessionId}); }
     finally { task.cdpKeyKind = null; task.cdpKeyInFlight = false; }
+    sent = true;
     return true;
-    } finally { task.sending = false; }
+    } finally {
+      if (sent && task.selectionAvailable && task.state === "running") {
+        const actual = await readSelection();
+        const expected = previous && {start:previous.start + character.length,end:previous.start + character.length};
+        if (task.state === "running") task.bookmark = sameSelection(actual,expected) ? actual : null;
+      }
+      task.sending = false;
+    }
   }
 
   function pause(reason = "") {
     if (!job || job.state !== "running") return;
+    if (job.correcting) {
+      stop("Correction interrupted. A temporary typo may remain; review the document.");
+      return;
+    }
+    if (job.sending) job.bookmark = null;
     job.state = "paused";
     job.pauseReason = typeof reason === "string" ? reason : "";
+    if (!job.bookmark) job.pauseReason += (job.pauseReason ? " · " : "") +
+      "Restore the insertion point manually before Resume";
     job.guard?.close();
     updateOverlay();
     notifyBadge(job, true);
   }
   function resume() {
-    if (!job || job.state !== "paused") return;
-    job.state = "running";
-    job.pauseReason = "";
-    try { installInputGuard(job); }
-    catch (error) {
-      job.error = "Input protection could not be restored: " + (error?.message || String(error));
-      stop();
+    const task = job;
+    if (!task || task.state !== "paused" || task.restoring) return;
+    const activate = () => {
+      if (job !== task || task.state !== "paused") return;
+      task.state = "running";
+      task.pauseReason = "";
+      try { installInputGuard(task); }
+      catch (error) {
+        stop("Input protection could not be restored: " + (error?.message || String(error)));
+        return;
+      }
+      updateOverlay();
+      notifyBadge(task, true);
+    };
+    if (task.sending) {
+      task.pauseReason = "Input still finishing. Check the document and Resume again.";
+      updateOverlay();
       return;
     }
+    if (!task.bookmark) { activate(); return; }
+    task.restoring = true;
     updateOverlay();
-    notifyBadge(job, true);
+    void (async () => {
+      try {
+        const answer = await bridgeRequest("restoreSelection", {selection:task.bookmark,sessionId:task.sessionId}, 1500);
+        if (job !== task || task.state !== "paused") return;
+        if (!answer.restored) throw new Error("Selection did not match");
+        activate();
+      } catch {
+        if (job === task && task.state === "paused") {
+          task.bookmark = null;
+          task.pauseReason = "Automatic caret restoration failed. Restore manually, then Resume.";
+        }
+      } finally {
+        task.restoring = false;
+        if (job === task) updateOverlay();
+      }
+    })();
   }
-  function stop() {
+  function stop(reason = "") {
     if (!job || !isActive(job)) return;
+    if (job.correcting || job.restoring) void bridgeRequest("cancelOperation",{sessionId:job.sessionId},300).catch(()=>{});
+    job.error = typeof reason === "string" && reason ? reason :
+      (job.correcting ? "Correction interrupted. A temporary typo may remain; review the document." : job.error);
     job.state = "stopped";
     job.guard?.close();
     updateOverlay();
     notifyBadge(job, true);
-    // The typing loop handles debugger cleanup in its finally block.
+  }
+  async function fixCharacter(task, wrong, correct) {
+    task.correcting = true;
+    try {
+      const result = await bridgeRequest("correct", {
+        sessionId:task.sessionId, wrong, correct, delay:task.options.fixPauseMs
+      },7000);
+      if (result.corrected && isActive(task)) {
+        task.bookmark = validSelection(result.selection) ? result.selection : null;
+        return true;
+      }
+      if (result.skipped && isActive(task)) return false;
+      if (isActive(task)) stop("Correction not confirmed. Check the document before restarting.");
+      return null;
+    } catch {
+      if (isActive(task)) stop("Correction not confirmed. A temporary typo may remain; review the document.");
+      return null;
+    } finally { task.correcting = false; }
   }
 
   async function run(task) {
@@ -581,6 +660,10 @@
       }
       if (!isActive(task)) return;
       task.phase = "typing";
+      if (task.state === "running") {
+        const initial = await readSelection();
+        if (task.state === "running") {task.bookmark = initial; task.selectionAvailable = !!initial;}
+      }
       if (task.options.showOverlay) ensureOverlay();
       else if (overlay?.host?.isConnected) overlay.host.remove();
       updateOverlay();
@@ -595,11 +678,28 @@
 
         const character = task.chars[i];
         const accidental = wrongLetter(character);
-        // Automatic destructive correction stays disabled. No hidden
-        // correction state or Backspace branch remains in the typing loop.
-        const leaveTypo = accidental && task.options.typo &&
-          Math.random() * 100 < task.options.typoChance;
-        if (!await sendCharacter(task, leaveTypo ? accidental : character)) break;
+        const wantsFix = task.options.fixTypo && task.selectionAvailable && task.mode === "iframe" &&
+          accidental && Math.random() * 100 < task.options.fixChance;
+        const pending = task.guard?.pending();
+        if (pending) await pending;
+        if (task.state === "paused") await pauseAwareWait(task,0);
+        if (!isActive(task)) break;
+        if (task.selectionAvailable && !task.bookmark) {
+          const current = await readSelection();
+          if (task.state === "running") task.bookmark = current;
+        }
+        if (task.state === "paused") await pauseAwareWait(task,0);
+        if (!isActive(task)) break;
+        let fixed = false;
+        if (wantsFix && task.bookmark) {
+          fixed = await fixCharacter(task,accidental,character);
+          if (fixed === null || !isActive(task)) break;
+        }
+        if (!fixed) {
+          const leaveTypo = !wantsFix && accidental && task.options.typo &&
+            Math.random() * 100 < task.options.typoChance;
+          if (!await sendCharacter(task,leaveTypo ? accidental : character)) break;
+        }
         task.index = i + 1;
         task.sinceRest += 1;
         updateOverlay();
@@ -683,7 +783,7 @@
     job = {
       chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, index: 0, state: "running", pauseReason: "", options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
-      guard: null, sending: false
+      guard: null, sending: false, bookmark: null, selectionAvailable: false, correcting: false, restoring: false
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

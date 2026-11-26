@@ -96,7 +96,7 @@ function typingHarness({pauseAtTypo = true, verifiedCorrection = false} = {}) {
       assert.ok(blockedWait, "must be waiting between characters");
     },
     fireTrusted(type) {
-      document.dispatchEvent({type, isTrusted: true, target:{closest:()=>({})}});
+      document.dispatchEvent({type, isTrusted: true, target:{closest:selector=>selector.includes(".kix-page")?{}:null}});
     }
   };
 }

@@ -148,7 +148,7 @@ function renderOptions() {
   for (const key of FIELDS) $(key).value = options[key];
   for (const key of TOGGLES) $(key).checked = Boolean(options[key]);
   for (const key of FEATURES) {
-    const enabled = key !== "fixTypo" && Boolean(options[key]);
+    const enabled = Boolean(options[key]);
     $(key).setAttribute("aria-pressed", String(enabled));
     $(key).classList.toggle("selected", enabled);
   }
@@ -196,7 +196,7 @@ function syncConfigControls() {
   // Disable every setting control until initial storage retrieval finishes.
   // Event guards below also block synthetic events during that async window.
   for (const key of [...FIELDS, ...TOGGLES, ...FEATURES, "mode", "deepRestAt", "enterStrategy", "reset"])
-    $(key).disabled = blocked || ["fixTypo", "fixChance", "fixPauseMs"].includes(key);
+    $(key).disabled = blocked;
   for (const button of document.querySelectorAll(".speed")) button.disabled = blocked;
   syncStartButton();
 }
@@ -332,7 +332,8 @@ function renderStatus(status) {
   $("pause").disabled = !["paused", "running"].includes(state);
   $("stop").disabled = !["paused", "running"].includes(state);
   syncStartButton();
-  $("pause").textContent = state === "paused" ? "Resume" : "Pause";
+  $("pause").textContent = status.restoring ? "Restoring…" : state === "paused" ? (status.manualResume ? "Resume manually" : "Resume") : "Pause";
+  $("pause").disabled = $("pause").disabled || !!status.restoring;
   const messages = {
     idle: "Ready · Text will be typed into the current Google Doc",
     running: `Typing ${index}/${total} · ${mode || "preparing"}`,
@@ -472,7 +473,7 @@ for (const button of document.querySelectorAll(".speed")) {
 }
 for (const key of FIELDS) {
   $(key).addEventListener("change", async () => {
-    if (!configReady || configBusy || ["fixChance", "fixPauseMs"].includes(key)) return;
+    if (!configReady || configBusy) return;
     options[key] = sanitize(key, $(key).value);
     renderOptions();
     await persist();
@@ -488,7 +489,7 @@ for (const key of TOGGLES) {
 }
 for (const key of FEATURES) {
   $(key).addEventListener("click", async () => {
-    if (!configReady || configBusy || key === "fixTypo") return;
+    if (!configReady || configBusy) return;
     options[key] = !options[key];
     renderOptions();
     await persist();
