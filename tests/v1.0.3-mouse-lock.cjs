@@ -51,7 +51,7 @@ function event(type, {trusted = true, buttons = 0, path = [], key = "", movement
 function makeHarness({
   edition = "iframe", advancedMode = true, mouseLock = true,
   showOverlay = false, startDelay = 1, failWait = false,
-  keyboardLock = false, fixTypo = false, blockWaits = 1, selection = null, holdCorrection = false, holdRestore = false, restoreFails = false
+  keyboardLock = false, fixTypo = false, blockWaits = 1, selection = {start:5,end:5}, notifications = false, holdCorrection = false, holdRestore = false, restoreFails = false
 } = {}) {
   const window = new FakeTarget();
   const document = new FakeTarget();
@@ -65,7 +65,7 @@ function makeHarness({
   let nextInterval = 0;
   const intervals = new Map();
   const logs = [];
-  let overlayHost = null, overlayButtons = null;
+  let overlayHost = null, overlayButtons = null, noticeHost = null, noticeButtons = null;
   const edits = [], requests = [];
   let currentSelection = selection, correctionReply = null, restoreReply = null;
   const rand = Object.create(Math);
@@ -86,8 +86,7 @@ function makeHarness({
         return controls.get(selector);
       }
     });
-    overlayHost = host;
-    overlayButtons = controls;
+    Object.defineProperty(host,'id',{set(id){if(id==='auto-type-notice-root'){noticeHost=host;noticeButtons=controls;}else{overlayHost=host;overlayButtons=controls;}}});
     return host;
   };
   document.body = {append(host) {host.isConnected = true;}};
@@ -153,13 +152,15 @@ function makeHarness({
     return response;
   };
   const options = {advancedMode, mouseLock, showOverlay, keyboardLock,
-    startDelay, speed:"fast", mode:"iframe", fixTypo, fixChance:35, fixPauseMs:400, jitter:0, rest:false};
+    startDelay, speed:"fast", mode:"iframe", notifications, fixTypo, fixChance:35, fixPauseMs:400, jitter:0, rest:false};
   return {
     window, document, innerWindow, innerDoc, send, options, logs, edits, requests,
     get currentSelection(){return currentSelection;},
     get correcting(){return !!correctionReply;},
     releaseRestore(){assert.ok(restoreReply);restoreReply();restoreReply=null;},
     setSelection(value) {currentSelection = value;},
+    get noticeHost() {return noticeHost;},
+    get noticeButtons() {return noticeButtons;},
     get overlayHost() {return overlayHost;},
     get overlayButtons() {return overlayButtons;},
     get waiting() {return Boolean(waitResolve);},
@@ -233,7 +234,9 @@ for (const edition of ["iframe","hybrid"]) {
     const free=event("click");
     h.document.dispatchEvent(free);
     assert.equal(free.defaultPrevented,false);
-    assert.equal(h.send("AT_PAGE_RESUME").status.state,"running");
+    assert.equal(h.send("AT_PAGE_RESUME").status.state,"paused");
+    await flush();
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
     assert.equal(h.window.count("wheel"),1);
     const blocked=event("click");
     h.document.dispatchEvent(blocked);
@@ -291,6 +294,7 @@ for (const edition of ["iframe","hybrid"]) {
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
     assert.equal(h.document.count("wheel"),0,"pause must release Mouse lock");
     h.overlayButtons.get("#toggle").dispatchEvent(event("click"));
+    await flush();
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
     assert.equal(h.document.count("wheel"),1,"resume must restore Mouse lock");
     h.overlayButtons.get("#stop").dispatchEvent(event("click"));
@@ -370,50 +374,36 @@ for (const edition of ["iframe","hybrid"]) {
       h.send("AT_PAGE_STOP");await h.finish();
     });
   }
-  test(edition+" only editor gesture pauses when logical selection API unavailable",async()=>{
+  test(edition+" clicks and arrow keys alone do not pause; actual caret movement does",async()=>{
     const h=makeHarness({edition,mouseLock:false,startDelay:0});
     await h.start("ab");
-    h.document.dispatchEvent(event("pointerdown"));
-    h.document.dispatchEvent(event("wheel",{editor:true}));
-    assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
-    h.innerDoc.dispatchEvent(event("pointerdown"));
-    await flush();
+    for(const type of ["pointerdown","mousedown","click","wheel","keydown"]){
+      h.innerDoc.dispatchEvent(event(type,{editor:true,key:"ArrowLeft"}));
+      h.pollFrames();await flush();
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
+    }
+    h.setSelection({start:2,end:2});
+    h.pollFrames();await flush();
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
     assert.equal(h.edits.length,1);
-    h.send("AT_PAGE_RESUME");await h.finish();
+    h.send("AT_PAGE_RESUME");await flush();
+    assert.deepEqual(h.currentSelection,{start:6,end:6});
+    await h.finish();
     assert.deepEqual(h.edits.map(e=>e.char),["a","b"]);
   });
-  for(const moved of [false,true]){
-    test(edition+" compares actual selection after an editor click (moved="+moved+")",async()=>{
-      const h=makeHarness({edition,mouseLock:false,startDelay:0,selection:{start:5,end:5}});
-      await h.start("ab");
-      h.innerDoc.dispatchEvent(event("pointerdown"));
-      await flush();
-      if(moved) h.setSelection({start:2,end:2});
-      h.innerDoc.dispatchEvent(event("pointerup"));
-      if(!moved) h.release();
-      await new Promise(r=>setTimeout(r,120));await flush();
-      assert.equal(h.send("AT_PAGE_STATUS").status.state,moved?"paused":"done");
-      assert.equal(h.edits.length,moved?1:2);
-      if(moved){h.send("AT_PAGE_RESUME");await flush();assert.deepEqual(h.currentSelection,{start:6,end:6});await h.finish();}
-      assert.deepEqual(h.edits.map(e=>e.char),["a","b"]);
-    });
-  }
-  test(edition+" unlocked keyboard activity pauses; enabled keyboard lock consumes keys",async()=>{
-    for (const keyboardLock of [false,true]) {
+  test(edition+" optional keyboard lock consumes keys without event-driven pause",async()=>{
+    for(const keyboardLock of [false,true]){
       const h=makeHarness({edition,keyboardLock,startDelay:0});
       await h.start("ab");
       const e=event("keydown",{key:"ArrowLeft"});
       h.innerDoc.dispatchEvent(e);
       assert.equal(e.defaultPrevented,keyboardLock);
-      assert.equal(h.send("AT_PAGE_STATUS").status.state,keyboardLock?"running":"paused");
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
       if(keyboardLock){
         h.innerDoc.dispatchEvent(event("keydown",{key:"Escape"}));
         assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
       }
-      h.send("AT_PAGE_STOP");
-      await h.finish();
-      assert.deepEqual(h.edits.map(e=>e.char),["a"]);
+      h.send("AT_PAGE_STOP");await h.finish();
     }
   });
   test(edition+" frame replacement rebinds guard before next input and leaves no old listeners",async()=>{
@@ -425,8 +415,8 @@ for (const edition of ["iframe","hybrid"]) {
     await h.waitForPacing();
     assert.equal(oldDoc.count("pointermove"),0);
     assert.equal(newDoc.count("pointermove"),1);
-    newDoc.dispatchEvent(event("pointerdown"));
-    await flush();
+    h.setSelection({start:1,end:1});
+    h.pollFrames();await flush();
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
     h.send("AT_PAGE_STOP");
     await h.finish();
@@ -435,18 +425,6 @@ for (const edition of ["iframe","hybrid"]) {
 }
 
 for(const edition of ["iframe","hybrid"]){
-  test(edition+" click-only transparent overlay hit tests the page and pauses",async()=>{
-    const h=makeHarness({edition,mouseLock:false,startDelay:0});
-    await h.start("ab");
-    h.document.elementFromPoint=()=>({closest:s=>s.includes(".kix-page")?{}:null});
-    const click=event("click");
-    click.clientX=200;click.clientY=300;
-    h.document.dispatchEvent(click);
-    await flush();
-    assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
-    assert.equal(h.edits.length,1);
-    h.send("AT_PAGE_STOP");await h.finish();
-  });
   for(const restoreFails of [false,true]){
     test(edition+" Resume awaits logical caret restoration (failure="+restoreFails+")",async()=>{
       const h=makeHarness({edition,mouseLock:false,startDelay:0,selection:{start:5,end:5},holdRestore:true,restoreFails});
@@ -461,8 +439,8 @@ for(const edition of ["iframe","hybrid"]){
       assert.deepEqual(restore.selection,{start:6,end:6});
       h.releaseRestore();await flush();
       if(restoreFails){
-        assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
-        assert.equal(h.send("AT_PAGE_STATUS").status.manualResume,true);
+        assert.equal(h.send("AT_PAGE_STATUS").status.state,"stopped");
+        assert.match(h.send("AT_PAGE_STATUS").status.error,/Automatic caret restoration failed/);
         assert.equal(h.edits.length,1);
         h.send("AT_PAGE_STOP");
       } else {
@@ -478,7 +456,7 @@ for(const edition of ["iframe","hybrid"]){
     assert.equal(h.send("AT_PAGE_START",{text:"ab",options:h.options}).ok,true);
     for(let i=0;i<30&&!h.correcting;i++)await flush(1);
     assert.ok(h.correcting);
-    h.document.dispatchEvent(event("click",{editor:true}));
+    h.send("AT_PAGE_PAUSE");
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"stopped");
     assert.match(h.send("AT_PAGE_STATUS").status.error,/Correction interrupted/);
     await h.finish();
@@ -489,30 +467,41 @@ for(const edition of ["iframe","hybrid"]){
 }
 
 for(const edition of ["iframe","hybrid"]){
-  test(edition+" unknown click target uses actual caret rectangle as fallback",async()=>{
+  test(edition+" caret monitoring is independent of DOM events, including long waits",async()=>{
     const h=makeHarness({edition,mouseLock:false,startDelay:0});
     await h.start("ab");
-    let x=10;
-    h.document.querySelectorAll=selector=>selector===".kix-cursor-caret"?
-      [{getBoundingClientRect:()=>({left:x,top:40,height:16})}]:[];
-    h.document.dispatchEvent(event("pointerdown"));
-    x=200;
-    h.document.dispatchEvent(event("click"));
-    await new Promise(r=>setTimeout(r,120));await flush();
-    assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
-    assert.equal(h.edits.length,1);
-    h.send("AT_PAGE_STOP");await h.finish();
-  });
-  test(edition+" unknown click with bookmark detects changed insertion point",async()=>{
-    const h=makeHarness({edition,mouseLock:false,startDelay:0,selection:{start:5,end:5}});
-    await h.start("ab");
     h.setSelection({start:2,end:2});
-    h.document.dispatchEvent(event("click"));
-    await new Promise(r=>setTimeout(r,120));await flush();
+    h.pollFrames();await flush();
     assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
     h.send("AT_PAGE_RESUME");await flush();
     assert.equal(h.currentSelection.start,6);
     await h.finish();
     assert.equal(h.currentSelection.start,7);
   });
+  test(edition+" unavailable model never guesses a caret or permits unverified Resume",async()=>{
+    const h=makeHarness({edition,mouseLock:false,startDelay:0,selection:null});
+    await h.start("ab");
+    h.innerDoc.dispatchEvent(event("click",{editor:true}));h.pollFrames();await flush();
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
+    h.send("AT_PAGE_PAUSE");h.send("AT_PAGE_RESUME");await flush();
+    assert.equal(h.send("AT_PAGE_STATUS").status.state,"stopped");
+    assert.match(h.send("AT_PAGE_STATUS").status.error,/Automatic caret restoration failed/);
+    await h.finish();assert.equal(h.edits.length,1);
+  });
+  for(const notifications of [true,false]){
+    test(edition+" standalone notice respects notification preference ("+notifications+")",async()=>{
+      const h=makeHarness({edition,mouseLock:false,showOverlay:false,startDelay:0,notifications});
+      await h.start("ab");
+      h.setSelection({start:1,end:1});h.pollFrames();await flush();
+      assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+      assert.equal(!!h.noticeHost?.isConnected,notifications);
+      assert.equal(!!h.overlayHost?.isConnected,false);
+      if(notifications){
+        assert.match(h.noticeButtons.get("#message").textContent,/Document caret moved/);
+        h.noticeButtons.get("#dismiss").dispatchEvent(event("click"));
+        assert.equal(h.noticeHost.isConnected,false);
+      }
+      h.send("AT_PAGE_STOP");await h.finish();
+    });
+  }
 }

@@ -510,8 +510,10 @@ $("notifications").addEventListener("change", async () => {
   if (!configReady || configBusy) return;
   const previous = notificationsEnabled;
   notificationsEnabled = $("notifications").checked;
+  $("notifications").disabled = true;
   try {await chrome.storage.local.set({autoTypeNotifications:notificationsEnabled});}
   catch {notificationsEnabled=previous;renderOptions();setMessage("Could not save notification preference","error");}
+  finally {$("notifications").disabled = !configReady || configBusy;}
 });
 $("reset").addEventListener("click", async () => {
   if (!configReady || configBusy) return;

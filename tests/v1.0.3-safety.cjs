@@ -114,13 +114,13 @@ test("stop after first character never deletes original text or advances unsent 
   assert.equal(h.send("AT_PAGE_STATUS").status.index,1);
 });
 
-test("mouse interaction pauses without destructive correction",async()=>{
+test("mouse interaction alone does not pause without a model",async()=>{
   const h=typingHarness();
   h.send("AT_PAGE_START",{text:"ab",options:h.options});
   await h.waitForTemp();
   h.fireTrusted("pointerdown");
   await flush();
-  assert.equal(h.send("AT_PAGE_STATUS").status.state,"paused");
+  assert.equal(h.send("AT_PAGE_STATUS").status.state,"running");
   h.send("AT_PAGE_STOP");h.release();await flush();
   assert.equal(h.buffer.text,"HELLOa");
   assert.deepEqual(h.backspaces,[]);

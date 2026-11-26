@@ -468,7 +468,13 @@
       const actual = await readSelection();
       if (job !== task || task.state !== "running" || task.sending || task.correcting ||
           task.restoring || task.bookmark !== expected) return true;
-      if (!actual) {pause("Document caret could not be read");return false;}
+      if (!actual) {
+        // A transient unavailable model is not evidence of movement. Stop only
+        // after repeated failures, rather than firing a false movement alert.
+        if (++task.caretFailures >= 3) {pause("Document caret verification unavailable");return false;}
+        return true;
+      }
+      task.caretFailures=0;
       if (!sameSelection(actual,expected)) {pause("Document caret moved");return false;}
       return true;
     })();
@@ -770,7 +776,7 @@
     job = {
       chars, sessionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}-${++bridgeSequence}`, index: 0, state: "running", pauseReason: "", notice: "", options, mode: "", error: "", sinceRest: 0,
       nextRestAt: 0, lastBadgeAt: 0, cdpKeyInFlight: false, cdpKeyKind: null, finalized: false,
-      guard: null, sending: false, bookmark: null, selectionAvailable: false, correcting: false, restoring: false, caretCheck:null, lastNotice:""
+      guard: null, sending: false, bookmark: null, selectionAvailable: false, correcting: false, restoring: false, caretCheck:null, caretFailures:0, lastNotice:""
     };
     if (job.options.showOverlay) ensureOverlay();
     else if (overlay?.host?.isConnected) overlay.host.remove();

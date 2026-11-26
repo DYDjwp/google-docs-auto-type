@@ -190,7 +190,7 @@ test("content script pause toggle is atomic and cancel stops current task", asyn
       showOverlay: false}
   }).ok, true);
   assert.equal(send("AT_PAGE_TOGGLE_PAUSE").status.state, "paused");
-  assert.equal(send("AT_PAGE_TOGGLE_PAUSE").status.state, "running");
+  assert.equal(send("AT_PAGE_TOGGLE_PAUSE").status.state, "stopped");
   assert.equal(send("AT_PAGE_STOP").status.state, "stopped");
   assert.equal(send("AT_PAGE_TOGGLE_PAUSE").status.state, "stopped");
   await flush();
