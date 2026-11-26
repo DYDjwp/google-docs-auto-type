@@ -192,7 +192,7 @@ test("P1: optional intentional CDP typo does not trigger destructive correction"
   assert.equal(h.backspaceQueued,false);
 });
 
-function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.4"}, holdStatus=false, holdCleanup=false, recoverOnCleanup=false} = {}) {
+function makePopupHarness({holdSave=false, edition="iframe", manifest={permissions:[],version:"1.0.4"}, holdStatus=false, holdCleanup=false, initialPageState="idle", recoverOnCleanup=false} = {}) {
   class Element {
     constructor(){
       this.textContent="";this.value="";this.hidden=false;this.disabled=false;
@@ -214,7 +214,7 @@ function makePopupHarness({holdSave=false, edition="iframe", manifest={permissio
   const gate = holdSave ? new Promise(resolve=>{releaseSave=resolve;}) : Promise.resolve();
   let started=0,closed=false;
   let statusReads=0, releaseStatus;
-  let pageState="idle", cleanupReady=!holdCleanup;
+  let pageState=initialPageState, cleanupReady=!holdCleanup;
   const intervals=[];
   const storage = new Map([["autoTypeDraft:17","Saved"],["autoTypeDraft:99","Old"]]);
   const chrome = {
@@ -468,22 +468,25 @@ for(const keyboardLock of [false,true]){
 
 for (const edition of ["iframe","hybrid"]) {
   test(edition+": Stop keeps Start disabled while cleanup is pending and re-enables it after status poll",async()=>{
-    const h=makePopupHarness({edition,holdCleanup:true});
+    // The popup opened to control a task started earlier, in another popup.
+    // Start closes its own popup, so starting here before Stop would be an
+    // invalid UI harness sequence and suppress later renderStatus calls.
+    const h=makePopupHarness({edition,holdCleanup:true,initialPageState:"running"});
     h.setCanSave(true);
     await h.ready();
-    await h.start("First draft");
-    assert.equal(h.started,1);
+    await h.edit("Second draft");
+    assert.equal(h.started,0);
     await h.get("stop").fire("click");
     assert.match(h.get("state").textContent,/Stopped.*Cleaning up/);
     assert.equal(h.get("start").disabled,true);
     await h.get("start").fire("click");
-    assert.equal(h.started,1,"a synthetic early Start must be ignored");
+    assert.equal(h.started,0,"a synthetic early Start must be ignored");
     await h.poll();
     assert.equal(h.get("start").disabled,true,"status polling must not unlock during cleanup");
     h.releaseCleanup();
     await h.poll();
     assert.equal(h.get("start").disabled,false,"fresh final status unlocks Start");
     await h.get("start").fire("click");
-    assert.equal(h.started,2,"Start is usable after cleanup completes");
+    assert.equal(h.started,1,"Start is usable after cleanup completes");
   });
 }
